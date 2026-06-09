@@ -118,7 +118,7 @@ export default function ChatMessage({ message, onAddToBundle }: ChatMessageProps
                                 {product.isKappyPick && (
                                     <div className="absolute top-2 left-2 z-10 flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold text-slate-950 bg-gradient-to-r from-amber-300 to-yellow-500 rounded-full shadow-md animate-pulse">
                                         <Star className="w-3.5 h-3.5 fill-current" />
-                                        <span>Kappy's Pick</span>
+                                        <span>Kappy&apos;s Pick</span>
                                     </div>
                                 )}
 

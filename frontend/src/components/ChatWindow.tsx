@@ -5,17 +5,79 @@ import { Sparkles, Trash2, Gift, CreditCard, ShoppingBag, X, Check, BrainCircuit
 import ChatInput from "./ChatInput";
 import ChatMessage, { Message, Product, TrackingData } from "./ChatMessage";
 
+const getUniqueId = (prefix: string): string => `${prefix}-${Date.now()}`;
+
+// ALGORITHM 20 — COLD START: Dynamic opening messages so it never feels robotic
+const COLD_START_MESSAGES = [
+    "Ayubowan! 👋 I'm Kappy, your Kapruka shopping friend.\nAre you shopping for someone special, reordering something, or just browsing?",
+    "Ayubowan! 👋 Ready to find something special?\nI know Kapruka's catalog inside out — just tell me what's on your mind.",
+    "Hey! 👋 I'm Kappy, your personal shopping buddy on Kapruka.\nWho are we shopping for today? 😊",
+];
+
+// ALGORITHM 25 — WAITING STATE PERSONALITY: Varied loading messages per context
+const LOADING_PHRASES: Record<string, string[]> = {
+    tracking: [
+        "Let me check where your parcel is right now... 📦",
+        "Checking on it for you — give me a second 😊",
+        "Mama balanna — parcel eka koheda kiyala... 📦",
+    ],
+    delivery: [
+        "Checking if we can get this to you in time... 🚚",
+        "Just verifying delivery — won't take a second 😊",
+        "Checking if [city] delivery is doable... 🗺️",
+    ],
+    search: [
+        "Let me check what we've got for you... 🔍",
+        "Machan hold on, let me find the right one for you... 🔍",
+        "Searching through the good stuff — one moment 😊",
+        "Looking for the best option in the catalog... ✨",
+    ],
+    reorder: [
+        "Scanning your purchase history... 🔄",
+        "Finding what you ordered before... 🔄",
+    ],
+    order: [
+        "Putting this together now... ✍️",
+        "Almost done — setting up your order...",
+        "Creating your order — just a moment ⏳",
+    ],
+    default: [
+        "Thinking... 🧠",
+        "Give me a second — working on it 😊",
+        "On it... 🧠",
+    ],
+};
+
+function getLoadingPhrase(text: string): string {
+    const normalized = text.toLowerCase();
+    let pool = LOADING_PHRASES.default;
+    if (normalized.includes("track") || normalized.includes("kp")) {
+        pool = LOADING_PHRASES.tracking;
+    } else if (normalized.includes("deliver") || normalized.includes("jaffna") || normalized.includes("kandy") || normalized.includes("colombo") || normalized.includes("place")) {
+        pool = LOADING_PHRASES.delivery;
+    } else if (normalized.includes("gift") || normalized.includes("cake") || normalized.includes("flower") || normalized.includes("chocolate") || normalized.includes("buy") || normalized.includes("find")) {
+        pool = LOADING_PHRASES.search;
+    } else if (normalized.includes("reorder") || normalized.includes("same as last") || normalized.includes("order again")) {
+        pool = LOADING_PHRASES.reorder;
+    } else if (normalized.includes("checkout") || normalized.includes("order") || normalized.includes("confirm")) {
+        pool = LOADING_PHRASES.order;
+    }
+    return pool[Math.floor(Math.random() * pool.length)];
+}
+
 export default function ChatWindow() {
     const [messages, setMessages] = useState<Message[]>([
         {
             id: "welcome-message",
             role: "assistant",
-            content: "Ayubowan! 👋 I'm Kappy, your shopping friend. Let's find some awesome gifts on Kapruka today!",
+            // Fixed for SSR — randomized after mount via useEffect (avoids hydration mismatch)
+            content: COLD_START_MESSAGES[0],
         }
     ]);
     const [isTyping, setIsTyping] = useState(false);
     const [typingText, setTypingText] = useState("");
-    
+    const [hasCheckedSession, setHasCheckedSession] = useState(false);
+
     // Bundle state
     const [bundle, setBundle] = useState<Product[]>([]);
     const [isBundleOpen, setIsBundleOpen] = useState(false);
@@ -35,6 +97,22 @@ export default function ChatWindow() {
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }, [messages, isTyping]);
+
+    // ALGORITHM 20 — COLD START: Randomize the welcome message client-side after mount
+    // (can't use Math.random() in initial state — causes SSR hydration mismatch)
+    useEffect(() => {
+        setMessages([
+            {
+                id: "welcome-message",
+                role: "assistant",
+                content: COLD_START_MESSAGES[Math.floor(Math.random() * COLD_START_MESSAGES.length)],
+            }
+        ]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // NOTE: Algorithm 26 (Session Recovery) is handled server-side by the orchestrator
+    // when the user sends their first message. No auto-ping needed here.
 
     const addToBundle = (product: Product) => {
         if (!bundle.some(item => item.id === product.id)) {
@@ -60,7 +138,7 @@ export default function ChatWindow() {
             {
                 id: "welcome-message",
                 role: "assistant",
-                content: "Ayubowan! 👋 I'm Kappy, your shopping friend. Let's find some awesome gifts on Kapruka today!",
+                content: COLD_START_MESSAGES[Math.floor(Math.random() * COLD_START_MESSAGES.length)],
             }
         ]);
         setActiveMemories([]);
@@ -69,7 +147,8 @@ export default function ChatWindow() {
 
     const fetchGeneralResponse = async (text: string) => {
         setIsTyping(true);
-        setTypingText("Thinking... 🧠");
+        // ALGORITHM 25 — WAITING STATE PERSONALITY: Pick a varied, personality-driven loading phrase
+        setTypingText(getLoadingPhrase(text));
 
         try {
             const chatHistory = messages
@@ -98,9 +177,15 @@ export default function ChatWindow() {
                 {
                     id: `kappy-${Date.now()}`,
                     role: "assistant",
-                    content: data.content
+                    content: data.content,
+                    products: data.products,
+                    tracking: data.tracking
                 }
             ]);
+
+            if (data.activeMemories && Array.isArray(data.activeMemories)) {
+                setActiveMemories(data.activeMemories);
+            }
         } catch (error) {
             console.error(error);
             setIsTyping(false);
@@ -115,9 +200,9 @@ export default function ChatWindow() {
         }
     };
 
-    const handleSendMessage = (text: string) => {
+    const handleSendMessage = async (text: string) => {
         // 1. Add User Message
-        const userMsgId = `user-${Date.now()}`;
+        const userMsgId = getUniqueId("user");
         setMessages(prev => [...prev, { id: userMsgId, role: "user", content: text }]);
 
         const normalizedText = text.toLowerCase();
@@ -368,32 +453,36 @@ export default function ChatWindow() {
                     <div ref={messagesEndRef} />
                 </div>
 
-                {/* Quick Action Suggestion Chips */}
-                {messages.length === 1 && !isTyping && (
+                {/* ALGORITHM 20 — COLD START: Quick-tap chips to remove "what do I even type?" paralysis */}
+                {messages.length <= 1 && !isTyping && (
                     <div className="px-6 py-4 grid grid-cols-2 md:grid-cols-4 gap-3 bg-slate-900/10 border-t border-white/5">
                         <button
-                            onClick={() => handleSendMessage("🎂 Find a gift for mom's birthday")}
+                            id="chip-gift-for-someone"
+                            onClick={() => handleSendMessage("🎂 Gift for someone")}
                             className="flex items-center justify-center gap-2 p-3 text-xs md:text-sm font-semibold text-slate-200 bg-slate-900/60 hover:bg-amber-500/10 active:scale-95 border border-white/10 hover:border-amber-400/40 rounded-xl shadow-lg transition-all duration-200"
                         >
-                            🎂 Find Gift for Mom
+                            🎁 Gift for Someone
                         </button>
                         <button
-                            onClick={() => handleSendMessage("📦 Track my order KP120349")}
+                            id="chip-track-order"
+                            onClick={() => handleSendMessage("📦 Track my order")}
                             className="flex items-center justify-center gap-2 p-3 text-xs md:text-sm font-semibold text-slate-200 bg-slate-900/60 hover:bg-rose-500/10 active:scale-95 border border-white/10 hover:border-rose-400/40 rounded-xl shadow-lg transition-all duration-200"
                         >
-                            📦 Track Order KP12
+                            📦 Track my Order
                         </button>
                         <button
-                            onClick={() => handleSendMessage("🔄 Reorder previous water bottle")}
+                            id="chip-reorder"
+                            onClick={() => handleSendMessage("🔄 Reorder something")}
                             className="flex items-center justify-center gap-2 p-3 text-xs md:text-sm font-semibold text-slate-200 bg-slate-900/60 hover:bg-indigo-500/10 active:scale-95 border border-white/10 hover:border-indigo-400/40 rounded-xl shadow-lg transition-all duration-200"
                         >
-                            🔄 Reorder Bottle
+                            🔄 Reorder Something
                         </button>
                         <button
-                            onClick={() => handleSendMessage("Just chatting")}
+                            id="chip-just-browsing"
+                            onClick={() => handleSendMessage("Just browsing")}
                             className="flex items-center justify-center gap-2 p-3 text-xs md:text-sm font-semibold text-slate-200 bg-slate-900/60 hover:bg-slate-800 active:scale-95 border border-white/10 hover:border-white/20 rounded-xl shadow-lg transition-all duration-200"
                         >
-                            💬 Just Chatting
+                            🛒 Just Browsing
                         </button>
                     </div>
                 )}
