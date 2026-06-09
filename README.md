@@ -1,36 +1,54 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Kapruka AI Assistant - Kappy
 
-## Getting Started
+This repository contains the visual prototype UI and test scripts for **Kappy**, the AI shopping assistant for Kapruka.
 
-First, run the development server:
+## Repository Structure
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+The workspace is organized as follows:
+
+```text
+kapruka-ai/
+├── frontend/             # Next.js, Tailwind v4, TypeScript Chat UI
+│   ├── src/              # React components & API routes
+│   ├── public/           # Product assets & images
+│   └── ...
+│
+├── backend/              # MCP scripts, search clients, & API test files
+│   ├── api-test.js
+│   ├── mcp-test.js
+│   ├── search-test.js
+│   └── ...
+│
+├── documentations/       # System specifications & visual architecture guides
+│   ├── UI Component Specifications.docx
+│   ├── UX System, Visual Design & Interface Architecture.docx
+│   └── ...
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+---
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## 🚀 Getting Started
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### 1. Frontend Development Server
+To launch and run the visual Chat UI:
 
-## Learn More
+```bash
+# Navigate to the frontend directory
+cd frontend
 
-To learn more about Next.js, take a look at the following resources:
+# Start the Next.js development server
+npm run dev
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Open [http://localhost:3000](http://localhost:3000) (or the network IP shown in your console) to view the Kappy interface.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### 2. Backend & MCP Test Scripts
+To test command line integrations with the Kapruka MCP server:
 
-## Deploy on Vercel
+```bash
+# Navigate to the backend directory
+cd backend
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+# Run the search test script
+node search-test.js "flowers"
+```
