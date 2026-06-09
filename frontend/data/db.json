@@ -1,0 +1,83 @@
+{
+  "profile": {
+    "primary_language": "singlish",
+    "communication_style": "casual",
+    "average_budget": 5000
+  },
+  "relationships": [
+    {
+      "relationship_type": "friend",
+      "nickname": "Tester-1781033127352",
+      "birthday": "2000-01-01",
+      "notes": "Test notes",
+      "id": "rel-1781033127352-vvkv"
+    },
+    {
+      "relationship_type": "friend",
+      "nickname": "Tester-1781033127451",
+      "birthday": "2000-01-01",
+      "notes": "Test notes",
+      "id": "rel-1781033127451-104v"
+    },
+    {
+      "relationship_type": "mother",
+      "nickname": "Amma",
+      "notes": "",
+      "id": "rel-1781033937327-0an0"
+    }
+  ],
+  "preferences": [
+    {
+      "id": "pref-1781033127364",
+      "relationship_id": "rel-1781033127352-vvkv",
+      "interest": "baking",
+      "confidence_score": 0.6
+    },
+    {
+      "id": "pref-1781033127462",
+      "relationship_id": "rel-1781033127451-104v",
+      "interest": "baking",
+      "confidence_score": 0.6
+    }
+  ],
+  "memories": [
+    {
+      "id": "mem-1781033127376",
+      "category": "context",
+      "key": "test_key",
+      "value": "test_value",
+      "timestamp": "2026-06-09T19:25:27.376Z"
+    },
+    {
+      "id": "mem-1781033127472",
+      "category": "context",
+      "key": "test_key",
+      "value": "test_value",
+      "timestamp": "2026-06-09T19:25:27.472Z"
+    }
+  ],
+  "orders": [
+    {
+      "orderNumber": "ORD-TEST-1781033127386",
+      "recipientName": "Test Recipient",
+      "totalAmount": 1500,
+      "items": [
+        "Item A",
+        "Item B"
+      ],
+      "id": "ord-1781033127386",
+      "createdAt": "2026-06-09T19:25:27.386Z"
+    },
+    {
+      "orderNumber": "ORD-TEST-1781033127480",
+      "recipientName": "Test Recipient",
+      "totalAmount": 1500,
+      "items": [
+        "Item A",
+        "Item B"
+      ],
+      "id": "ord-1781033127480",
+      "createdAt": "2026-06-09T19:25:27.480Z"
+    }
+  ]
+}
