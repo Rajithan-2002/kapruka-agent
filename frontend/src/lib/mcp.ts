@@ -59,7 +59,7 @@ export interface MCPProduct {
 }
 
 // Wrap search products tool
-export async function mcpSearchProducts(query: string, limit = 5, inStockOnly = true): Promise<MCPProduct[]> {
+export async function mcpSearchProducts(query: string, limit = 40, inStockOnly = true): Promise<MCPProduct[]> {
     try {
         const client = await getMCPClient();
         const response = await client.callTool({
@@ -153,4 +153,50 @@ export async function mcpCheckDelivery(city: string): Promise<Record<string, unk
         console.error("Error calling kapruka_check_delivery tool:", error);
         return null;
     }
+}
+
+// Stub for kapruka_get_product (Master Prompt Tool 2)
+export async function mcpGetProduct(productId: string): Promise<Record<string, unknown> | null> {
+    console.log(`[MCP Stub] kapruka_get_product called for ${productId}`);
+    // Fallback mock since this MCP endpoint might not exist yet
+    return {
+        id: productId,
+        description: "This is a detailed description retrieved from the Kapruka product database. It includes specifications, dimensions, and warranty information.",
+        available_options: ["Standard", "Premium"],
+        images: ["https://example.com/image1.jpg", "https://example.com/image2.jpg"]
+    };
+}
+
+// Stub for kapruka_list_categories (Master Prompt Tool 3)
+export async function mcpListCategories(): Promise<string[]> {
+    console.log(`[MCP Stub] kapruka_list_categories called`);
+    return [
+        "Cakes & Bakery",
+        "Flowers",
+        "Chocolates",
+        "Hampers & Gift Sets",
+        "Electronics & Gadgets",
+        "Soft Toys",
+        "Clothing & Fashion",
+        "Beauty & Grooming",
+        "Grocery",
+        "Baby Products"
+    ];
+}
+
+// Stub for kapruka_list_delivery_cities (Master Prompt Tool 4)
+export async function mcpListDeliveryCities(): Promise<string[]> {
+    console.log(`[MCP Stub] kapruka_list_delivery_cities called`);
+    return [
+        "Colombo (1-15)",
+        "Gampaha",
+        "Kandy",
+        "Galle",
+        "Kurunegala",
+        "Negombo",
+        "Jaffna",
+        "Matara",
+        "Nuwara Eliya",
+        "Island-wide delivery available for non-perishable items."
+    ];
 }

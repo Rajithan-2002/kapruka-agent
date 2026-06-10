@@ -4,15 +4,10 @@ import React, { useState, useEffect, useRef } from "react";
 import { Sparkles, Trash2, Gift, CreditCard, ShoppingBag, X, Check, BrainCircuit } from "lucide-react";
 import ChatInput from "./ChatInput";
 import ChatMessage, { Message, Product, TrackingData } from "./ChatMessage";
+import { createClient } from "@/lib/supabase/client";
+import { User } from "@supabase/supabase-js";
 
 const getUniqueId = (prefix: string): string => `${prefix}-${Date.now()}`;
-
-// ALGORITHM 20 — COLD START: Dynamic opening messages so it never feels robotic
-const COLD_START_MESSAGES = [
-    "Ayubowan! 👋 I'm Kappy, your Kapruka shopping friend.\nAre you shopping for someone special, reordering something, or just browsing?",
-    "Ayubowan! 👋 Ready to find something special?\nI know Kapruka's catalog inside out — just tell me what's on your mind.",
-    "Hey! 👋 I'm Kappy, your personal shopping buddy on Kapruka.\nWho are we shopping for today? 😊",
-];
 
 // ALGORITHM 25 — WAITING STATE PERSONALITY: Varied loading messages per context
 const LOADING_PHRASES: Record<string, string[]> = {
@@ -66,14 +61,13 @@ function getLoadingPhrase(text: string): string {
 }
 
 export default function ChatWindow() {
-    const [messages, setMessages] = useState<Message[]>([
-        {
-            id: "welcome-message",
-            role: "assistant",
-            // Fixed for SSR — randomized after mount via useEffect (avoids hydration mismatch)
-            content: COLD_START_MESSAGES[0],
-        }
-    ]);
+    const [user, setUser] = useState<User | null>(null);
+    const [isAuthLoading, setIsAuthLoading] = useState(true);
+    const supabase = createClient();
+
+    const [messages, setMessages] = useState<Message[]>([]);
+    const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+    const [conversations, setConversations] = useState<{ id: string; title: string; updated_at?: string }[]>([]);
     const [isTyping, setIsTyping] = useState(false);
     const [typingText, setTypingText] = useState("");
     const [hasCheckedSession, setHasCheckedSession] = useState(false);
@@ -91,34 +85,179 @@ export default function ChatWindow() {
     const [recipientName, setRecipientName] = useState("Amma");
     const [deliveryAddress, setDeliveryAddress] = useState("No 12, Flower Rd, Colombo 03");
     
-    const messagesEndRef = useRef<HTMLDivElement>(null);
+    // Debug mode
+    const [isDebugMode, setIsDebugMode] = useState(false);
+    
+    const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-    // Auto-scroll to bottom of messages
+    // Auto-scroll to bottom of messages safely (prevents layout shift bugs)
     useEffect(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+        if (scrollContainerRef.current) {
+            scrollContainerRef.current.scrollTo({
+                top: scrollContainerRef.current.scrollHeight,
+                behavior: "smooth"
+            });
+        }
     }, [messages, isTyping]);
 
-    // ALGORITHM 20 — COLD START: Randomize the welcome message client-side after mount
-    // (can't use Math.random() in initial state — causes SSR hydration mismatch)
+    // Auth Setup
     useEffect(() => {
-        setMessages([
-            {
-                id: "welcome-message",
-                role: "assistant",
-                content: COLD_START_MESSAGES[Math.floor(Math.random() * COLD_START_MESSAGES.length)],
-            }
-        ]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+        const checkUser = async () => {
+            const { data: { user } } = await supabase.auth.getUser();
+            setUser(user);
+            setIsAuthLoading(false);
+        };
+        checkUser();
 
-    // NOTE: Algorithm 26 (Session Recovery) is handled server-side by the orchestrator
-    // when the user sends their first message. No auto-ping needed here.
+        const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+            setUser(session?.user || null);
+        });
+
+        return () => subscription.unsubscribe();
+    }, [supabase]);
+
+    // Fetch conversation list whenever active user exists or messages update (captures title generation updates)
+    useEffect(() => {
+        if (!user) return;
+        
+        const fetchConversations = async () => {
+            try {
+                const res = await fetch("/api/conversations");
+                const data = await res.json();
+                if (data.conversations) {
+                    setConversations(data.conversations);
+                }
+            } catch (err) {
+                console.error("Error loading conversations:", err);
+            }
+        };
+
+        fetchConversations();
+    }, [user, messages]);
+
+    // Initialize or load latest conversation on mount/login
+    useEffect(() => {
+        if (!user || hasCheckedSession) return;
+
+        const initSession = async () => {
+            try {
+                const res = await fetch("/api/conversations");
+                const data = await res.json();
+                if (data.conversations && data.conversations.length > 0) {
+                    // Try to restore last active conversation from localStorage
+                    const savedActiveId = localStorage.getItem("kappy_active_conv_id");
+                    const stillExists = data.conversations.some((c: any) => c.id === savedActiveId);
+                    if (savedActiveId && stillExists) {
+                        setActiveConversationId(savedActiveId);
+                    } else {
+                        setActiveConversationId(data.conversations[0].id);
+                    }
+                } else {
+                    // Create first conversation
+                    const newId = `session-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+                    await fetch("/api/conversations", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ id: newId, title: "New Chat" })
+                    });
+                    setActiveConversationId(newId);
+                }
+                setHasCheckedSession(true);
+            } catch (err) {
+                console.error(err);
+            }
+        };
+        initSession();
+    }, [user, hasCheckedSession]);
+
+    // Fetch messages when active conversation switches
+    useEffect(() => {
+        if (!activeConversationId) return;
+        localStorage.setItem("kappy_active_conv_id", activeConversationId);
+
+        const loadMessages = async () => {
+            try {
+                const res = await fetch(`/api/conversations/${activeConversationId}/messages`);
+                const data = await res.json();
+                if (data.messages) {
+                    setMessages(data.messages);
+                }
+            } catch (err) {
+                console.error("Error loading messages:", err);
+            }
+        };
+
+        loadMessages();
+    }, [activeConversationId]);
+
+    const startNewChat = async () => {
+        const newId = `session-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+        try {
+            await fetch("/api/conversations", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ id: newId, title: "New Chat" })
+            });
+            setActiveConversationId(newId);
+            setMessages([]);
+            setBundle([]);
+        } catch (err) {
+            console.error(err);
+        }
+    };
+
+    const handleDeleteConversation = async (id: string, e: React.MouseEvent) => {
+        e.stopPropagation();
+        try {
+            await fetch(`/api/conversations?id=${id}`, {
+                method: "DELETE"
+            });
+            
+            // Update the local state list immediately
+            setConversations(prev => prev.filter(c => c.id !== id));
+            
+            if (activeConversationId === id) {
+                const remaining = conversations.filter(c => c.id !== id);
+                if (remaining.length > 0) {
+                    setActiveConversationId(remaining[0].id);
+                } else {
+                    // Initialize a fresh chat session
+                    const newId = `session-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+                    await fetch("/api/conversations", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ id: newId, title: "New Chat" })
+                    });
+                    setActiveConversationId(newId);
+                    setMessages([]);
+                }
+            }
+        } catch (err) {
+            console.error(err);
+        }
+    };
 
     const addToBundle = (product: Product) => {
         if (!bundle.some(item => item.id === product.id)) {
             setBundle(prev => [...prev, product]);
             setIsBundleOpen(true);
             
+            // Track in purchase history
+            fetch("/api/track", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    product: {
+                        id: product.id,
+                        name: product.name,
+                        category: product.category || "General",
+                        price: product.price
+                    },
+                    action: "added_to_bundle",
+                    sessionContext: { sessionId: activeConversationId }
+                })
+            }).catch(err => console.error("Error tracking add to bundle:", err));
+
             // Add a temporary system message to indicate item was added
             const systemMsg: Message = {
                 id: `system-add-${Date.now()}`,
@@ -134,13 +273,7 @@ export default function ChatWindow() {
     };
 
     const clearChat = () => {
-        setMessages([
-            {
-                id: "welcome-message",
-                role: "assistant",
-                content: COLD_START_MESSAGES[Math.floor(Math.random() * COLD_START_MESSAGES.length)],
-            }
-        ]);
+        setMessages([]);
         setActiveMemories([]);
         setBundle([]);
     };
@@ -165,7 +298,8 @@ export default function ChatWindow() {
                 },
                 body: JSON.stringify({
                     message: text,
-                    history: chatHistory
+                    history: chatHistory,
+                    sessionId: activeConversationId
                 }),
             });
 
@@ -179,7 +313,8 @@ export default function ChatWindow() {
                     role: "assistant",
                     content: data.content,
                     products: data.products,
-                    tracking: data.tracking
+                    tracking: data.tracking,
+                    traceReport: data.traceReport
                 }
             ]);
 
@@ -220,6 +355,25 @@ export default function ChatWindow() {
         
         setTimeout(() => {
             setCheckoutStep("success");
+            
+            // Track the purchased items
+            bundle.forEach(item => {
+                fetch("/api/track", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        product: {
+                            id: item.id,
+                            name: item.name,
+                            category: item.category || "General",
+                            price: item.price
+                        },
+                        action: "purchased",
+                        sessionContext: { sessionId: activeConversationId, recipientName, deliveryAddress }
+                    })
+                }).catch(err => console.error("Error tracking purchase:", err));
+            });
+
             setBundle([]); // Clear bundle on successful payment
             
             // Add a success confirmation to chat
@@ -232,9 +386,91 @@ export default function ChatWindow() {
         }, 2000);
     };
 
+    if (isAuthLoading) {
+        return (
+            <div className="flex-1 h-screen bg-[#090D16] flex items-center justify-center">
+                <BrainCircuit className="w-12 h-12 text-amber-400 animate-pulse" />
+            </div>
+        );
+    }
+
+    if (!user) {
+        return (
+            <div className="flex flex-col items-center justify-center h-screen bg-[#090D16] text-white p-6 relative overflow-hidden">
+                <div className="absolute top-[-20%] left-[-10%] w-[60%] h-[60%] rounded-full bg-violet-600/10 blur-[150px] pointer-events-none" />
+                <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] rounded-full bg-amber-500/10 blur-[120px] pointer-events-none" />
+                
+                <div className="relative z-10 flex flex-col items-center bg-slate-900/50 backdrop-blur-2xl p-10 rounded-3xl border border-white/10 shadow-2xl max-w-md w-full text-center">
+                    <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-amber-400 to-rose-500 shadow-lg shadow-rose-950/40 flex items-center justify-center mb-6">
+                        <span className="font-black text-3xl text-slate-950">K</span>
+                    </div>
+                    <h2 className="text-2xl font-extrabold mb-2">Welcome to Kappy AI</h2>
+                    <p className="text-slate-400 text-sm mb-8 leading-relaxed">
+                        Sign in to sync your preferences, remember relationships, and get truly personalized Kapruka recommendations.
+                    </p>
+                    <button
+                        onClick={() => supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: `${window.location.origin}/auth/callback` } })}
+                        className="w-full flex items-center justify-center gap-3 py-3.5 bg-white text-slate-900 font-bold rounded-xl hover:bg-slate-100 transition-all active:scale-95 shadow-lg"
+                    >
+                        <svg className="w-5 h-5" viewBox="0 0 24 24">
+                            <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                            <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                            <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
+                            <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
+                        </svg>
+                        Sign in with Google
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div className="relative flex flex-col md:flex-row flex-1 h-screen bg-[#090D16] overflow-hidden text-white font-sans">
             
+            {/* Sidebar history */}
+            <div className="w-full md:w-64 bg-slate-950/80 backdrop-blur-xl border-r border-white/5 flex flex-col h-[30vh] md:h-full z-20">
+                <div className="p-4 border-b border-white/5 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                        <Sparkles className="w-4 h-4 text-amber-400" />
+                        <span className="font-extrabold text-sm tracking-wide text-slate-200">Chat History</span>
+                    </div>
+                    <button 
+                        onClick={startNewChat}
+                        className="p-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold transition-all flex items-center justify-center"
+                        title="New Chat"
+                    >
+                        <span className="text-xs px-1">New Chat</span>
+                    </button>
+                </div>
+                
+                <div className="flex-1 overflow-y-auto p-3 space-y-1">
+                    {conversations.length === 0 ? (
+                        <div className="text-xs text-slate-500 text-center py-6">No previous chats.</div>
+                    ) : (
+                        conversations.map((conv) => (
+                            <div
+                                key={conv.id}
+                                onClick={() => setActiveConversationId(conv.id)}
+                                className={`group flex items-center justify-between p-2.5 rounded-xl cursor-pointer transition-all ${
+                                    activeConversationId === conv.id
+                                        ? "bg-white/10 text-white font-semibold border border-white/10"
+                                        : "hover:bg-white/5 text-slate-400 hover:text-slate-200"
+                                }`}
+                            >
+                                <span className="text-xs truncate flex-1 pr-2">{conv.title}</span>
+                                <button
+                                    onClick={(e) => handleDeleteConversation(conv.id, e)}
+                                    className="opacity-0 group-hover:opacity-100 p-1 hover:bg-white/10 rounded-md text-rose-400 transition-opacity"
+                                >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                            </div>
+                        ))
+                    )}
+                </div>
+            </div>
+
             {/* Background Glow effects */}
             <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] rounded-full bg-violet-600/10 blur-[120px] pointer-events-none" />
             <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] rounded-full bg-amber-500/10 blur-[120px] pointer-events-none" />
@@ -243,7 +479,7 @@ export default function ChatWindow() {
             <div className="flex-1 flex flex-col h-full relative z-10 border-r border-white/5">
                 
                 {/* Header Widget */}
-                <header className="flex items-center justify-between px-6 py-4 bg-slate-900/40 backdrop-blur-xl border-b border-white/5">
+                <header className="shrink-0 flex items-center justify-between px-6 py-4 bg-slate-900/40 backdrop-blur-xl border-b border-white/5">
                     <div className="flex items-center gap-3">
                         <div className="relative flex items-center justify-center w-10 h-10 rounded-2xl bg-gradient-to-tr from-amber-400 to-rose-500 shadow-lg shadow-rose-950/20">
                             <span className="font-black text-lg text-slate-950">K</span>
@@ -273,7 +509,15 @@ export default function ChatWindow() {
                         </div>
                     )}
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-3">
+                        <button
+                            onClick={() => setIsDebugMode(!isDebugMode)}
+                            title="Toggle Developer Trace View"
+                            className={`p-2.5 rounded-xl border transition-all active:scale-95 ${isDebugMode ? "bg-purple-500/20 text-purple-400 border-purple-500/50" : "bg-white/5 text-slate-400 hover:text-purple-400 border-white/5 hover:border-purple-500/20"}`}
+                        >
+                            <BrainCircuit className="w-4 h-4" />
+                        </button>
+
                         <button
                             onClick={clearChat}
                             title="Reset Chat"
@@ -281,6 +525,23 @@ export default function ChatWindow() {
                         >
                             <Trash2 className="w-4 h-4" />
                         </button>
+                        
+                        {user && (
+                            <div className="flex items-center gap-2 pl-3 border-l border-white/10">
+                                <img 
+                                    src={user.user_metadata?.avatar_url || "https://www.gravatar.com/avatar/?d=mp"} 
+                                    alt="Avatar" 
+                                    className="w-8 h-8 rounded-full border border-white/10" 
+                                />
+                                <button 
+                                    onClick={() => supabase.auth.signOut()}
+                                    className="text-xs font-semibold text-slate-400 hover:text-white transition-colors"
+                                >
+                                    Log out
+                                </button>
+                            </div>
+                        )}
+                        
                         
                         {/* Bundle Sidebar Toggle (Mobile only) */}
                         <button
@@ -298,12 +559,16 @@ export default function ChatWindow() {
                 </header>
 
                 {/* Chat Message Box Container */}
-                <div className="flex-1 overflow-y-auto px-6 py-6 space-y-4 scrollbar-thin">
+                <div 
+                    ref={scrollContainerRef}
+                    className="flex-1 overflow-y-auto px-6 py-6 space-y-4 scrollbar-thin"
+                >
                     
                     {messages.map((message) => (
                         <ChatMessage
                             key={message.id}
                             message={message}
+                            isDebugMode={isDebugMode}
                             onAddToBundle={addToBundle}
                         />
                     ))}
@@ -321,8 +586,8 @@ export default function ChatWindow() {
                         />
                     )}
 
-                    {/* Scroll anchor */}
-                    <div ref={messagesEndRef} />
+                    {/* Scroll anchor padding */}
+                    <div className="h-2" />
                 </div>
 
                 {/* ALGORITHM 20 — COLD START: Quick-tap chips to remove "what do I even type?" paralysis */}
@@ -360,7 +625,7 @@ export default function ChatWindow() {
                 )}
 
                 {/* Bottom Input Area */}
-                <div className="p-6 bg-slate-900/30 backdrop-blur-xl border-t border-white/5">
+                <div className="shrink-0 p-6 bg-slate-900/30 backdrop-blur-xl border-t border-white/5">
                     <ChatInput onSendMessage={handleSendMessage} disabled={isTyping} />
                 </div>
             </div>

@@ -1,10 +1,13 @@
 import { MCPProduct } from "./mcp";
+import { LifecycleLog } from "./recommendationValidator";
 
 export interface RecommendationContext {
-    situation: string; // birthday, apology, anniversary, general
-    recipient: string; // mother, wife, girlfriend, father, friend, etc.
-    recipientPreferences: string[]; // e.g. ["gardening", "tea", "baking"]
-    targetBudget: number; // e.g. 5000 LKR
+    situation: string;
+    recipient: string;
+    recipientPreferences: string[];
+    targetBudget: number;
+    userIntent?: string;
+    purchaseCategories?: string[];
 }
 
 export interface RankedProduct {
@@ -13,167 +16,161 @@ export interface RankedProduct {
     price: number;
     image_url: string;
     url: string;
-    isKappyPick: boolean;
+    category?: string;
+    isHighlighted: boolean;
     reason: string;
     delivery: string;
     inStock: boolean;
     score: number;
 }
 
-export function rankProducts(products: MCPProduct[], context: RecommendationContext): RankedProduct[] {
-    if (!products || products.length === 0) return [];
+export function rankProducts(
+    products: MCPProduct[], 
+    context: RecommendationContext, 
+    lifecycleLogs: LifecycleLog[] = []
+): { ranked: RankedProduct[], logs: LifecycleLog[] } {
+    if (!products || products.length === 0) return { ranked: [], logs: lifecycleLogs };
+
+    const intentLower = (context.userIntent || "").toLowerCase();
 
     const scoredList = products.map((prod) => {
         const name = prod.name.toLowerCase();
         const summary = (prod.summary || "").toLowerCase();
         const priceAmount = prod.price.amount;
+        const category = (prod.category?.name || "").toLowerCase();
 
-        // 1. SITUATION MATCH (35%)
-        let situationScore = 0.5; // Baseline
-        const situation = context.situation.toLowerCase();
-        
-        if (situation.includes("birthday")) {
-            if (name.includes("cake") || summary.includes("cake")) {
-                situationScore = 1.0;
-            } else if (name.includes("flower") || name.includes("bouquet") || summary.includes("flower")) {
-                situationScore = 0.8;
-            } else if (name.includes("gift") || name.includes("hamper") || summary.includes("hamper")) {
-                situationScore = 0.7;
-            }
-        } else if (situation.includes("apology") || situation.includes("sorry")) {
-            if (name.includes("flower") || name.includes("bouquet") || name.includes("rose")) {
-                situationScore = 1.0;
-            } else if (name.includes("chocolate") || summary.includes("chocolate")) {
-                situationScore = 0.9;
-            }
-        } else if (situation.includes("anniversary") || situation.includes("love")) {
-            if (name.includes("flower") || name.includes("rose") || name.includes("bouquet")) {
-                situationScore = 1.0;
-            } else if (name.includes("pendant") || name.includes("jewelry") || name.includes("hamper")) {
-                situationScore = 0.9;
-            }
+        // 1. INTENT MATCH (35%)
+        let intentScore = 0.5;
+        if (intentLower) {
+            const keywords = intentLower.split(/\s+/);
+            const matches = keywords.filter(kw => kw.length > 2 && (name.includes(kw) || category.includes(kw) || summary.includes(kw)));
+            if (matches.length > 0) intentScore = 0.8 + (0.2 * (matches.length / keywords.length));
+        } else {
+            intentScore = 1.0; // If no specific intent, don't penalize
         }
 
-        // 2. RECIPIENT MATCH (25%)
-        let recipientScore = 0.5; // Baseline
-        
-        // Check if product matches recipient's specific preference tags
+        // 2. USER PREFERENCES (15%)
+        let prefScore = 0.0;
         if (context.recipientPreferences && context.recipientPreferences.length > 0) {
-            let matchesPref = false;
             for (const pref of context.recipientPreferences) {
-                const cleanPref = pref.toLowerCase();
-                if (name.includes(cleanPref) || summary.includes(cleanPref)) {
-                    matchesPref = true;
+                if (name.includes(pref.toLowerCase()) || summary.includes(pref.toLowerCase())) {
+                    prefScore = 1.0;
                     break;
                 }
             }
-            if (matchesPref) {
-                recipientScore = 1.0;
-            }
-        }
-        
-        // Occasion specific baseline fit
-        const recipient = context.recipient.toLowerCase();
-        if (recipient === "mother" || recipient === "amma") {
-            if (name.includes("tea") || name.includes("spa") || name.includes("garden") || name.includes("plant") || name.includes("ceramic")) {
-                recipientScore = Math.max(recipientScore, 0.9);
-            }
-        } else if (recipient === "girlfriend" || recipient === "wife") {
-            if (name.includes("rose") || name.includes("chocolate") || name.includes("teddy") || name.includes("perfume")) {
-                recipientScore = Math.max(recipientScore, 0.9);
-            }
-        } else if (recipient === "father" || recipient === "thaththa") {
-            if (name.includes("shaving") || name.includes("belt") || name.includes("wallet") || name.includes("coffee") || name.includes("watch")) {
-                recipientScore = Math.max(recipientScore, 0.9);
-            }
+        } else {
+            prefScore = 0.5; // Neutral
         }
 
-        // 3. DELIVERY MATCH (20%)
-        let deliveryScore = 0.0;
-        let deliveryBadge = "🚚 2-3 Days Delivery";
-        
-        if (prod.in_stock) {
-            deliveryScore = 0.7; // Baseline in-stock
-            deliveryBadge = "🚚 Next Day Delivery";
-            
-            // Check if fast delivery mentioned
-            if (name.includes("cake") || name.includes("flower") || name.includes("fruit")) {
-                deliveryScore = 1.0; // Same day/Tomorrow candidates
-                deliveryBadge = "🚚 Tomorrow Delivery";
-            }
-        }
-
-        // 4. BUDGET MATCH (15%)
-        let budgetScore = 0.0;
-        const target = context.targetBudget;
-        
-        if (priceAmount <= target) {
-            // Fits budget
-            const ratio = priceAmount / target;
-            if (ratio >= 0.7) {
-                budgetScore = 1.0; // Ideal range: 70% to 100% of budget
-            } else {
-                budgetScore = 0.7; // Under budget (fits, but cheap)
+        // 3. PURCHASE HISTORY (15%)
+        let historyScore = 0.0;
+        if (context.purchaseCategories && context.purchaseCategories.length > 0) {
+            if (context.purchaseCategories.some(cat => category.includes(cat.toLowerCase()) || cat.toLowerCase().includes(category))) {
+                historyScore = 1.0;
             }
         } else {
-            // Over budget
-            const ratio = priceAmount / target;
-            if (ratio <= 1.25) {
-                budgetScore = 0.4; // Slightly over budget (25% buffer)
-            } else {
-                budgetScore = 0.0; // Too expensive
-            }
+            historyScore = 0.5; // Neutral
         }
 
-        // 5. HISTORICAL PREFERENCE (5%)
-        // Baseline default contribution
-        const historyScore = 0.8; 
-
-        // CALCULATE TOTAL WEIGHTED SCORE
-        const totalScore = 
-            (0.35 * situationScore) + 
-            (0.25 * recipientScore) + 
-            (0.20 * deliveryScore) + 
-            (0.15 * budgetScore) + 
-            (0.05 * historyScore);
-
-        // BUILD WHY REASON STRING
-        let reason = "Great option matching your occasion and target price.";
-        if (situationScore >= 0.9 && recipientScore >= 0.9) {
-            reason = `Perfect match! Fits your ${context.situation} occasion and matches your recipient's interest in ${context.recipientPreferences.join(', ') || 'personal items'}.`;
-        } else if (situationScore >= 0.9) {
-            reason = `Highly recommended celebration match for this ${context.situation} occasion.`;
-        } else if (recipientScore >= 0.9) {
-            reason = `Great recipient fit, especially matching interests in ${context.recipientPreferences.join(', ') || 'preferred items'}.`;
+        // 4. RELATIONSHIP CONTEXT (10%)
+        let relationScore = 0.5;
+        const recipient = context.recipient.toLowerCase();
+        const situation = context.situation.toLowerCase();
+        
+        if (recipient === "mother" || recipient === "amma") {
+            if (name.includes("tea") || name.includes("spa") || name.includes("garden") || name.includes("saree") || name.includes("cake")) relationScore = 1.0;
+        } else if (recipient === "girlfriend" || recipient === "wife") {
+            if (name.includes("rose") || name.includes("chocolate") || name.includes("teddy") || name.includes("perfume")) relationScore = 1.0;
+        } else if (recipient === "father" || recipient === "thaththa") {
+            if (name.includes("shaving") || name.includes("belt") || name.includes("wallet") || name.includes("coffee")) relationScore = 1.0;
         }
         
-        if (deliveryScore === 1.0) {
-            reason += " Can be delivered rapidly to ensure it arrives in time.";
+        if (situation.includes("birthday") && name.includes("cake")) relationScore = 1.0;
+        if (situation.includes("anniversary") && name.includes("flower")) relationScore = 1.0;
+
+        // 5. BUDGET MATCH (10%)
+        let budgetScore = 0.0;
+        const target = context.targetBudget;
+        if (target > 0) {
+            if (priceAmount <= target) {
+                const ratio = priceAmount / target;
+                budgetScore = ratio >= 0.7 ? 1.0 : 0.7; // Ideal is close to budget
+            } else {
+                budgetScore = 0.4; // Slightly over budget
+            }
+        } else {
+            budgetScore = 0.8;
         }
 
-        return {
+        // 6. DELIVERY SUITABILITY (5%)
+        let deliveryScore = prod.in_stock ? 1.0 : 0.0;
+        let deliveryBadge = prod.in_stock ? "🚚 Fast Delivery" : "🚚 Standard Delivery";
+
+        // 7. POPULARITY (5%)
+        let popScore = Math.random() * 0.5 + 0.5; // Mock since MCP doesn't return popularity
+
+        // 8. RATING (5%)
+        let ratingScore = 1.0; // Mock since MCP doesn't return ratings
+
+        // TOTAL WEIGHTED SCORE
+        const totalScore = 
+            (intentScore * 0.35) + 
+            (prefScore * 0.15) + 
+            (historyScore * 0.15) + 
+            (relationScore * 0.10) + 
+            (budgetScore * 0.10) + 
+            (deliveryScore * 0.05) + 
+            (popScore * 0.05) + 
+            (ratingScore * 0.05);
+
+        // Procedural Reason Generation
+        let reason = "A great option available for delivery.";
+        const strongestDims = [];
+        if (intentScore >= 0.8) strongestDims.push("matches your exact search");
+        if (prefScore === 1.0) strongestDims.push("aligns with saved preferences");
+        if (historyScore === 1.0) strongestDims.push("is similar to past purchases");
+        if (relationScore === 1.0) strongestDims.push("is a classic gift for this occasion");
+        if (budgetScore === 1.0) strongestDims.push("fits your budget perfectly");
+
+        if (strongestDims.length > 0) {
+            reason = `Recommended because it ${strongestDims.slice(0, 2).join(" and ")}.`;
+        }
+
+        const rankedItem: RankedProduct = {
             id: prod.id,
             name: prod.name,
             price: priceAmount,
             image_url: prod.image_url,
             url: prod.url,
-            isKappyPick: false, // Will be set after ranking
+            category: prod.category?.name,
+            isHighlighted: false,
             reason,
             delivery: deliveryBadge,
-            inStock: prod.in_stock,
-            score: totalScore
+            inStock: prod.in_stock || false,
+            score: parseFloat(totalScore.toFixed(2))
         };
+
+        // Update Lifecycle Log
+        const logEntry = lifecycleLogs.find(l => l.productId === prod.id);
+        if (logEntry) {
+            logEntry.stage = "Scoring Engine V2";
+            logEntry.score = rankedItem.score;
+        }
+
+        return rankedItem;
     });
 
     // Sort scored items descending
     const sorted = scoredList.sort((a, b) => b.score - a.score);
 
-    // Tag Kappy's Pick (only if we have items)
-    if (sorted.length > 0) {
-        sorted[0].isKappyPick = true;
-        // Make Kappy's Pick explanation extra detailed
-        sorted[0].reason = `⭐ KAPPY'S PICK: ${sorted[0].reason} Fits budget and represents the highest perceived value for ${context.recipient}.`;
-    }
+    // Assign Ranks and Highlight Status to logs
+    sorted.forEach((item, index) => {
+        const rank = index + 1;
+        const logEntry = lifecycleLogs.find(l => l.productId === item.id);
+        if (logEntry) {
+            logEntry.rank = rank;
+        }
+    });
 
-    return sorted;
+    return { ranked: sorted, logs: lifecycleLogs };
 }

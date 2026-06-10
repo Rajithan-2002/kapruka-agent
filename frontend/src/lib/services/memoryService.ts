@@ -5,7 +5,6 @@ const supabaseUrl = process.env.SUPABASE_URL || "";
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY || "";
 const useCloud = !!(supabaseUrl && supabaseKey);
 const supabase = useCloud ? createClient(supabaseUrl, supabaseKey) : null;
-const FALLBACK_USER_ID = "00000000-0000-0000-0000-000000000000";
 
 // Extended interfaces to include importance scoring
 export interface RankedPreference extends Preference {
@@ -18,13 +17,13 @@ export interface RankedMemory extends ConversationMemory {
     last_used_at?: string;
 }
 
-export async function getRelationships(): Promise<Relationship[]> {
+export async function getRelationships(userId: string): Promise<Relationship[]> {
     if (!useCloud || !supabase) return [];
     
     const { data, error } = await supabase
         .from("relationships")
         .select("*")
-        .eq("user_id", FALLBACK_USER_ID);
+        .eq("user_id", userId);
         
     if (error) {
         console.error("Error getting relationships:", error);
@@ -40,23 +39,21 @@ export async function getRelationships(): Promise<Relationship[]> {
     }));
 }
 
-export async function getPreferences(): Promise<RankedPreference[]> {
+export async function getPreferences(userId: string): Promise<RankedPreference[]> {
     if (!useCloud || !supabase) return [];
     
-    // Attempt to order by importance_score if column exists, else standard select
     const { data, error } = await supabase
         .from("preferences")
         .select("*")
-        .eq("user_id", FALLBACK_USER_ID)
+        .eq("user_id", userId)
         .order("importance_score", { ascending: false, nullsFirst: false })
         .order("confidence_score", { ascending: false });
         
     if (error) {
-        // Fallback in case importance_score column doesn't exist yet
         const fb = await supabase
             .from("preferences")
             .select("*")
-            .eq("user_id", FALLBACK_USER_ID)
+            .eq("user_id", userId)
             .order("confidence_score", { ascending: false });
             
         if (fb.error) return [];
@@ -66,22 +63,21 @@ export async function getPreferences(): Promise<RankedPreference[]> {
     return data as RankedPreference[];
 }
 
-export async function getMemories(): Promise<RankedMemory[]> {
+export async function getMemories(userId: string): Promise<RankedMemory[]> {
     if (!useCloud || !supabase) return [];
     
     const { data, error } = await supabase
         .from("memories")
         .select("*")
-        .eq("user_id", FALLBACK_USER_ID)
+        .eq("user_id", userId)
         .order("importance_score", { ascending: false, nullsFirst: false })
         .order("timestamp", { ascending: false });
         
     if (error) {
-        // Fallback in case importance_score column doesn't exist yet
         const fb = await supabase
             .from("memories")
             .select("*")
-            .eq("user_id", FALLBACK_USER_ID)
+            .eq("user_id", userId)
             .order("timestamp", { ascending: false });
             
         if (fb.error) return [];
@@ -89,4 +85,126 @@ export async function getMemories(): Promise<RankedMemory[]> {
     }
     
     return data as RankedMemory[];
+}
+
+// Write Operations migrated from monolithic db.ts
+export async function addRelationship(userId: string, data: Omit<Relationship, "id">): Promise<Relationship> {
+    if (!useCloud || !supabase) throw new Error("No database connected");
+
+    const id = `rel-${Date.now()}`;
+    const insertData = {
+        id,
+        user_id: userId,
+        relationship_type: data.relationship_type,
+        nickname: data.nickname,
+        birthday: data.birthday,
+        notes: data.notes
+    };
+
+    const { error } = await supabase.from("relationships").insert(insertData);
+    if (error) {
+        console.error("Error adding relationship:", error);
+        throw error;
+    }
+
+    return { ...data, id };
+}
+
+export async function addPreference(userId: string, relationshipId: string | undefined, interest: string): Promise<Preference> {
+    if (!useCloud || !supabase) throw new Error("No database connected");
+
+    // Phase 3 Check: If preference already exists, just bump importance score
+    const existing = await getPreferences(userId);
+    const match = existing.find(p => p.relationship_id === relationshipId && p.interest.toLowerCase() === interest.toLowerCase());
+    
+    if (match) {
+        await incrementPreferenceImportance(userId, match.id);
+        return match;
+    }
+
+    const id = `pref-${Date.now()}`;
+    const insertData = {
+        id,
+        user_id: userId,
+        relationship_id: relationshipId,
+        interest,
+        confidence_score: 1.0,
+        importance_score: 1
+    };
+
+    const { error } = await supabase.from("preferences").insert(insertData);
+    if (error) {
+        console.error("Error adding preference:", error);
+        throw error;
+    }
+
+    return { id, relationship_id: relationshipId, interest, confidence_score: 1.0 };
+}
+
+export async function addMemory(userId: string, category: string, key: string, value: string): Promise<ConversationMemory> {
+    if (!useCloud || !supabase) throw new Error("No database connected");
+
+    // Phase 3 Check: Avoid duplicates, bump score
+    const existing = await getMemories(userId);
+    const match = existing.find(m => m.category === category && m.key === key && m.value.toLowerCase() === value.toLowerCase());
+    
+    if (match) {
+        await incrementMemoryImportance(userId, match.id);
+        return match;
+    }
+
+    const id = `mem-${Date.now()}`;
+    const insertData = {
+        id,
+        user_id: userId,
+        category,
+        key,
+        value,
+        importance_score: 1
+    };
+
+    const { error } = await supabase.from("memories").insert(insertData);
+    if (error) {
+        console.error("Error adding memory:", error);
+        throw error;
+    }
+
+    return { id, category, key, value, timestamp: new Date().toISOString() };
+}
+
+// Phase 3 Scoring Updaters
+export async function incrementPreferenceImportance(userId: string, prefId: string): Promise<void> {
+    if (!useCloud || !supabase) return;
+    try {
+        const { data } = await supabase.from("preferences").select("importance_score").eq("id", prefId).eq("user_id", userId).single();
+        if (data) {
+            await supabase.from("preferences")
+                .update({ 
+                    importance_score: (data.importance_score || 1) + 1,
+                    last_used_at: new Date().toISOString()
+                })
+                .eq("id", prefId)
+                .eq("user_id", userId);
+        }
+    } catch (e) {
+        console.error(e);
+    }
+}
+
+export async function incrementMemoryImportance(userId: string, memId: string): Promise<void> {
+    if (!useCloud || !supabase) return;
+    try {
+        const { data } = await supabase.from("memories").select("importance_score").eq("id", memId).eq("user_id", userId).single();
+        if (data) {
+            await supabase.from("memories")
+                .update({ 
+                    importance_score: (data.importance_score || 1) + 1,
+                    last_used_at: new Date().toISOString()
+                })
+                .eq("id", memId)
+                .eq("user_id", userId);
+        }
+    } catch (e) {
+        console.error(e);
+    }
 }

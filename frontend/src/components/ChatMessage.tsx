@@ -9,7 +9,8 @@ export interface Product {
     price: number;
     image_url: string;
     url: string;
-    isKappyPick?: boolean;
+    category?: string;
+    isHighlighted?: boolean;
     reason?: string;
     delivery?: string;
     inStock?: boolean;
@@ -37,15 +38,17 @@ export interface Message {
     products?: Product[];
     tracking?: TrackingData;
     isCheckout?: boolean;
+    traceReport?: any;
 }
 
 interface ChatMessageProps {
     message: Message;
+    isDebugMode?: boolean;
     onAddToBundle?: (product: Product) => void;
 }
 
-export default function ChatMessage({ message, onAddToBundle }: ChatMessageProps) {
-    const { role, content, isLoading, loadingText, products, tracking, isCheckout } = message;
+export default function ChatMessage({ message, isDebugMode = false, onAddToBundle }: ChatMessageProps) {
+    const { role, content, isLoading, loadingText, products, tracking, isCheckout, traceReport } = message;
     const isAssistant = role === "assistant";
 
     // Track which products have expanded details inline
@@ -100,25 +103,25 @@ export default function ChatMessage({ message, onAddToBundle }: ChatMessageProps
                 )}
             </div>
 
-            {/* Product Recommendations Grid (If Available) */}
+            {/* Product Recommendations Horizontal Carousel (Mobile First) */}
             {isAssistant && products && products.length > 0 && (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 w-full mt-4 animate-fade-in">
-                    {products.map((product) => {
+                <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 md:gap-4 w-full mt-4 pb-4 animate-fade-in">
+                    {products.map((product, index) => {
                         const isExpanded = !!expandedProducts[product.id];
                         return (
                             <div
-                                key={product.id}
-                                className={`relative flex flex-col rounded-2xl bg-slate-900/70 border overflow-hidden transition-all duration-300 hover:scale-[1.02] shadow-xl ${
-                                    product.isKappyPick
+                                key={`${product.id}-${index}`}
+                                className={`relative flex flex-col rounded-2xl bg-slate-900/70 border overflow-hidden transition-all duration-300 hover:scale-[1.02] shadow-xl w-full ${
+                                    product.isHighlighted
                                         ? "border-amber-400/80 shadow-amber-950/20 shadow-xl"
                                         : "border-white/10"
                                 }`}
                             >
-                                {/* Kappy's Pick Glow Badge */}
-                                {product.isKappyPick && (
+                                {/* Recommended Glow Badge */}
+                                {product.isHighlighted && (
                                     <div className="absolute top-2 left-2 z-10 flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold text-slate-950 bg-gradient-to-r from-amber-300 to-yellow-500 rounded-full shadow-md animate-pulse">
                                         <Star className="w-3.5 h-3.5 fill-current" />
-                                        <span>Kappy&apos;s Pick</span>
+                                        <span>Recommended For You</span>
                                     </div>
                                 )}
 
@@ -169,7 +172,11 @@ export default function ChatMessage({ message, onAddToBundle }: ChatMessageProps
                                             
                                             {onAddToBundle && (
                                                 <button
-                                                    onClick={() => onAddToBundle(product)}
+                                                    onClick={() => {
+                                                        // Ping analytics asynchronously
+                                                        fetch('/api/analytics', { method: 'POST', body: JSON.stringify({ sessionId: 'chat-session', productId: product.id, action: 'add_to_cart' }) }).catch(e => console.error(e));
+                                                        onAddToBundle(product);
+                                                    }}
                                                     className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-bold text-white bg-gradient-to-r from-amber-500 to-rose-500 hover:from-amber-600 hover:to-rose-600 active:scale-95 rounded-lg shadow-md transition-all"
                                                 >
                                                     <ShoppingCart className="w-3.5 h-3.5" />
@@ -191,6 +198,9 @@ export default function ChatMessage({ message, onAddToBundle }: ChatMessageProps
                                                         href={product.url}
                                                         target="_blank"
                                                         rel="noopener noreferrer"
+                                                        onClick={() => {
+                                                            fetch('/api/analytics', { method: 'POST', body: JSON.stringify({ sessionId: 'chat-session', productId: product.id, action: 'click' }) }).catch(e => console.error(e));
+                                                        }}
                                                         className="text-rose-400 hover:underline"
                                                     >
                                                         View on Kapruka Website →
@@ -261,6 +271,73 @@ export default function ChatMessage({ message, onAddToBundle }: ChatMessageProps
                             <Truck className="w-3.5 h-3.5" /> Est. Arrival:
                         </span>
                         <strong className="text-white">{tracking.estimatedArrival}</strong>
+                    </div>
+                </div>
+            )}
+
+            {/* Debug UI Trace Report */}
+            {isDebugMode && traceReport && (
+                <div className="mt-4 p-4 rounded-xl bg-slate-950 border border-purple-500/30 overflow-hidden text-xs font-mono text-purple-300 shadow-inner w-full max-w-2xl mx-auto md:mx-0">
+                    <div className="flex items-center gap-2 mb-2 font-bold text-purple-400 border-b border-purple-500/20 pb-2">
+                        <span>🔍 RECOMMENDATION TRACE DIAGNOSTIC</span>
+                        <div className="ml-auto flex items-center gap-2">
+                            {traceReport.context_override && (
+                                <span className="bg-rose-500/20 text-rose-400 px-2 py-0.5 rounded text-[10px] animate-pulse">
+                                    CONTEXT OVERRIDE: REFRESHED
+                                </span>
+                            )}
+                            <span className="bg-purple-500/20 px-2 py-0.5 rounded text-[10px]">
+                                {traceReport.mode?.toUpperCase() || 'UNKNOWN'} MODE
+                            </span>
+                        </div>
+                    </div>
+                    {traceReport.context_override && (
+                        <div className="mb-3 px-3 py-2 bg-rose-500/10 border border-rose-500/20 rounded flex justify-between items-center text-[10px] text-rose-300">
+                            <div><strong>Prev Budget:</strong> Rs. {traceReport.previous_budget || 'None'}</div>
+                            <div>→</div>
+                            <div><strong>New Budget:</strong> Rs. {traceReport.current_budget || 'None'}</div>
+                            <div className="px-2 py-0.5 bg-rose-500/20 rounded">Cache Wiped</div>
+                        </div>
+                    )}
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-x-4 gap-y-1 mb-4">
+                        <div><span className="opacity-50">Query:</span> {traceReport.query}</div>
+                        <div><span className="opacity-50">Trace ID:</span> {traceReport.trace_id?.split('-')[0]}</div>
+                        <div className="text-emerald-400"><span className="opacity-50 text-purple-300">Retrieved:</span> {traceReport.raw_product_count}</div>
+                        <div className="text-orange-400"><span className="opacity-50 text-purple-300">Deduped:</span> {traceReport.deduplicated_count || 0}</div>
+                        <div className="text-rose-400"><span className="opacity-50 text-purple-300">Filtered:</span> {traceReport.filtered_count}</div>
+                        <div className="text-blue-400"><span className="opacity-50 text-purple-300">Ranked:</span> {traceReport.ranked_count}</div>
+                        <div className="text-amber-400"><span className="opacity-50 text-purple-300">Displayed:</span> {traceReport.displayed_count}</div>
+                        <div className="text-indigo-400"><span className="opacity-50 text-purple-300">Cached:</span> {traceReport.cache_remaining || 0}</div>
+                    </div>
+                    
+                    <div className="border border-purple-500/20 rounded overflow-x-auto">
+                        <table className="w-full text-left border-collapse">
+                            <thead>
+                                <tr className="bg-purple-900/30 border-b border-purple-500/20">
+                                    <th className="p-2 font-semibold">Product</th>
+                                    <th className="p-2 font-semibold">Stage</th>
+                                    <th className="p-2 font-semibold">Status</th>
+                                    <th className="p-2 font-semibold">Reason</th>
+                                    <th className="p-2 font-semibold text-right">Score</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {traceReport.trace_data?.map((log: any, i: number) => (
+                                    <tr key={i} className={`border-b border-purple-500/10 hover:bg-purple-900/20 ${log.status === 'FAILED' ? 'opacity-60' : ''}`}>
+                                        <td className="p-2 truncate max-w-[150px]">{log.productName}</td>
+                                        <td className="p-2 text-[10px]">{log.stage}</td>
+                                        <td className="p-2">
+                                            <span className={`px-1.5 py-0.5 rounded ${log.status === 'PASSED' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'}`}>
+                                                {log.status}
+                                            </span>
+                                            {log.isHighlighted && <span className="ml-1 text-amber-400">★</span>}
+                                        </td>
+                                        <td className="p-2 text-[10px] max-w-[150px] truncate" title={log.reason}>{log.reason || '-'}</td>
+                                        <td className="p-2 text-right">{log.score || '-'}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             )}

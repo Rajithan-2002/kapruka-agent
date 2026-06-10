@@ -5,13 +5,17 @@
   --foreground: #f8fafc;
 }
 
+html, body {
+  height: 100%;
+  width: 100%;
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  font-family: var(--font-noto-sans), var(--font-noto-sinhala), var(--font-noto-tamil), system-ui, sans-serif;
   overflow: hidden;
-  height: 100vh;
-  width: 100vw;
+  margin: 0;
 }
 
 /* Custom animations for premium micro-interactions */
