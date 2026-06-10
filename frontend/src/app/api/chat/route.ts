@@ -1,12 +1,14 @@
-import { GoogleGenAI } from "@google/genai";
+import OpenAI from "openai";
 import { NextResponse } from "next/server";
 import {
-    readDB,
     addMemory,
     addPreference,
     addRelationship,
     updateProfile
 } from "@/lib/db";
+import { getProfile } from "@/lib/services/profileService";
+import { getRelationships, getPreferences, getMemories } from "@/lib/services/memoryService";
+import { buildUserContext } from "@/lib/services/personalizationService";
 import {
     mcpSearchProducts,
     mcpTrackOrder,
@@ -19,8 +21,8 @@ import {
     RecommendationContext
 } from "@/lib/scoring";
 
-const ai = new GoogleGenAI({
-    apiKey: process.env.GEMINI_API_KEY,
+const openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
 });
 
 // SYSTEM INSTRUCTION FOR THE FINAL HUMANIZER PHASE
@@ -143,21 +145,27 @@ export async function POST(request: Request) {
     try {
         const { message, history } = await request.json();
 
-        // 1. Retrieve Memories from Database
-        const db = await readDB();
-        const profile = db.profile;
-        const relationships = db.relationships;
-        const preferences = db.preferences;
+        // 1. Retrieve Memories from Database using new services
+        const profile = await getProfile();
+        const relationships = await getRelationships();
+        const preferences = await getPreferences();
+        const memories = await getMemories();
+        const userContextBlock = await buildUserContext();
+
+        const chatHistoryContext = history && Array.isArray(history)
+            ? history.map((h: { role: string; content: string }) => `${h.role === "user" ? "User" : "Kappy"}: ${h.content}`).join("\n")
+            : "";
 
         // 2. ORCHESTRATOR PHASE (JSON intent classifier)
         const orchestratorPrompt = `
 You are the AI Orchestrator manager for Kappy, a shopping assistant for Kapruka (Sri Lanka).
 Analyze the user's current message, the chat history, and the active memory database:
 
-[ACTIVE PROFILES]
-- User Profile: ${JSON.stringify(profile)}
-- Relationships Saved: ${JSON.stringify(relationships)}
-- Preferences Saved: ${JSON.stringify(preferences)}
+[ACTIVE USER CONTEXT]
+${userContextBlock}
+
+[CONVERSATION HISTORY]
+${chatHistoryContext}
 
 [USER'S CURRENT REQUEST]
 "${message}"
@@ -196,18 +204,16 @@ RULES:
 8. Detect if they requested a bundle, or if they need help writing a gift message.
 9. Set "is_reorder" to true if the user says "same as last time", "reorder", "order again", "get my usual".
 10. Set "proactive_bundle_suggest" to true if user just asked for a single product for an occasion that naturally calls for a bundle (birthday: cake+flowers+choc, anniversary: flowers+choc+card, apology: roses+choc). Only set when NOT already requesting a bundle.
-11. ALGORITHM 26 — SESSION RECOVERY: If conversation history is empty or very short AND the user has active saved relationships/preferences in memory, set intent to "session_recovery" to trigger a warm returning-user greeting.
+11. ALGORITHM 26 — SESSION RECOVERY: If the user sends a generic greeting ("hi", "hello") AND has active saved relationships/preferences, set intent to "session_recovery". Do NOT use this if the user is making a specific new request (like "find a gift for my girlfriend").
 `;
 
-        const orchestratorRes = await ai.models.generateContent({
-            model: "gemini-2.5-flash-lite",
-            contents: orchestratorPrompt,
-            config: {
-                responseMimeType: "application/json"
-            }
+        const orchestratorRes = await openai.chat.completions.create({
+            model: "gpt-4o-mini",
+            messages: [{ role: "system", content: orchestratorPrompt }],
+            response_format: { type: "json_object" }
         });
 
-        const plan = JSON.parse(orchestratorRes.text || "{}");
+        const plan = JSON.parse(orchestratorRes.choices[0].message.content || "{}");
         console.log("Kappy Orchestrator Plan:", plan);
 
         // 3. Save memory to database if extracted
@@ -261,7 +267,7 @@ RULES:
                     r => r.relationship_type.toLowerCase() === plan.detected_recipient.toLowerCase()
                 );
                 if (targetRel) {
-                    const dbPrefs = db.preferences.filter(p => p.relationship_id === targetRel.id);
+                    const dbPrefs = preferences.filter(p => p.relationship_id === targetRel.id);
                     recipientPrefs = dbPrefs.map(p => p.interest);
                 }
             }
@@ -317,9 +323,6 @@ RULES:
         }
 
         // 6. HUMANIZATION PHASE (generate natural persona response)
-        const chatHistoryContext = history && Array.isArray(history)
-            ? history.map((h: { role: string; content: string }) => `${h.role === "user" ? "User" : "Kappy"}: ${h.content}`).join("\n")
-            : "";
 
         // SESSION RECOVERY (Algorithm 26): Warm returning-user greeting when memory exists but conversation is fresh
         const isNewConversation = !history || (Array.isArray(history) && history.length <= 1);
@@ -362,24 +365,26 @@ Based on the above, generate Kappy's response following these rules:
 7. After tracking info, always add a warm human observation ("It's moving well — Colombo deliveries are usually pretty quick.").
 8. Never end the message at a problem — always offer a path forward.
 9. Match the user's language mode (English/Singlish/Tanglish/Mixed) exactly.
+10. DO NOT list products, prices, or images in your text. The products are automatically rendered by the frontend UI as rich cards below your message. Just refer to them naturally in conversation (e.g. "Here are some options I found!").
 `;
 
-        const humanRes = await ai.models.generateContent({
-            model: "gemini-2.5-flash-lite",
-            contents: finalHumanizerPrompt,
+        const humanRes = await openai.chat.completions.create({
+            model: "gpt-4o-mini",
+            messages: [{ role: "system", content: finalHumanizerPrompt }]
         });
 
         // Retrieve active context tags from database
-        const dbUpdated = await readDB();
-        const activeContextTags = dbUpdated.preferences.slice(0, 3).map(p => {
-            const rel = dbUpdated.relationships.find(r => r.id === p.relationship_id);
+        const updatedPrefs = await getPreferences();
+        const updatedRels = await getRelationships();
+        const activeContextTags = updatedPrefs.slice(0, 3).map(p => {
+            const rel = updatedRels.find(r => r.id === p.relationship_id);
             return rel ? `${rel.nickname} ${p.interest}` : p.interest;
         });
 
         // 7. RETURN FINAL PAYLOAD TO FRONTEND
         return NextResponse.json({
             role: "assistant",
-            content: humanRes.text || "Hari machan, mama check karala baluwa.",
+            content: humanRes.choices[0].message.content || "Hari machan, mama check karala baluwa.",
             products: productsList.length > 0 ? productsList : undefined,
             tracking: trackingData ? trackingData : undefined,
             activeMemories: activeContextTags
@@ -388,9 +393,9 @@ Based on the above, generate Kappy's response following these rules:
     } catch (error: unknown) {
         console.error("Kappy Reasoning Loop Error:", error);
 
-        // Handle Gemini API rate limit (429) gracefully
+        // Handle OpenAI API rate limit (429) gracefully
         const errMsg = error instanceof Error ? error.message : String(error);
-        if (errMsg.includes("429") || errMsg.toLowerCase().includes("quota")) {
+        if (errMsg.includes("429") || errMsg.toLowerCase().includes("quota") || errMsg.toLowerCase().includes("rate limit")) {
             return NextResponse.json({
                 role: "assistant",
                 content: "Machan, podi second ekak wait karanna 😅 API ekak dannem hari busy wela. Try again in a moment!"
