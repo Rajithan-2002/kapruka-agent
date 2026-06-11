@@ -4,6 +4,7 @@ export interface ValidationContext {
     occasion?: string;
     recipient?: string;
     budget?: number;
+    budgetNormalized?: { min?: number | null, max?: number | null, target?: number | null } | null;
     searchQuery: string;
 }
 
@@ -80,12 +81,25 @@ export function validateProducts(
         }
 
         // 4. Budget Filter
-        if (!isRejected && context.budget && context.budget > 0) {
-            const maxAllowedBudget = context.budget * 1.25;
+        let maxAllowedBudget = Infinity;
+        let hasBudgetConstraint = false;
+
+        if (context.budgetNormalized && context.budgetNormalized.max) {
+            maxAllowedBudget = context.budgetNormalized.max; // Strict max
+            hasBudgetConstraint = true;
+        } else if (context.budgetNormalized && context.budgetNormalized.target) {
+            maxAllowedBudget = context.budgetNormalized.target * 1.25; // Target buffer
+            hasBudgetConstraint = true;
+        } else if (context.budget && context.budget > 0) {
+            maxAllowedBudget = context.budget * 1.25; // Legacy target buffer
+            hasBudgetConstraint = true;
+        }
+
+        if (!isRejected && hasBudgetConstraint) {
             if (prod.price > maxAllowedBudget) {
                 isRejected = true;
                 failedStage = "Budget Filter";
-                rejectionReason = `Price (${prod.price}) exceeds 25% buffer of target budget (${context.budget})`;
+                rejectionReason = `Price (${prod.price}) exceeds allowed budget max (${maxAllowedBudget})`;
             }
         }
 

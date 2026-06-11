@@ -28,13 +28,14 @@ export async function saveSearchSession(session: SearchSession) {
     }
 }
 
-export async function getSearchSession(chatSessionId: string): Promise<SearchSession | null> {
+export async function getSearchSession(chatSessionId: string, userId: string): Promise<SearchSession | null> {
     try {
         const supabase = await createClient();
         const { data, error } = await supabase
             .from('search_sessions')
             .select('*')
             .eq('chat_session_id', chatSessionId)
+            .eq('user_id', userId)
             .single();
             
         if (error || !data) return null;

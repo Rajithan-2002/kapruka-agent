@@ -276,6 +276,8 @@ export default function ChatWindow() {
         setMessages([]);
         setActiveMemories([]);
         setBundle([]);
+        const newSessionId = getUniqueId("conv");
+        setActiveConversationId(newSessionId);
     };
 
     const fetchGeneralResponse = async (text: string) => {
