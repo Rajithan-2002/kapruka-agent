@@ -8,10 +8,7 @@ export async function POST(request: Request) {
         const supabase = await createClient();
         const { data: { user } } = await supabase.auth.getUser();
 
-        if (!user) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-        }
-        const userId = user.id;
+        const userId = user ? user.id : "00000000-0000-0000-0000-000000000000";
 
         const { product, action, sessionContext } = await request.json();
 
