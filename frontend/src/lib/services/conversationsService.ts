@@ -56,7 +56,10 @@ export async function getUserConversations(userId: string): Promise<Conversation
 
     const { data, error } = await supabase
         .from("conversations")
-        .select("*")
+        .select(`
+            *,
+            chat_history:chat_history(count)
+        `)
         .eq("user_id", userId)
         .order("updated_at", { ascending: false });
 
@@ -65,7 +68,19 @@ export async function getUserConversations(userId: string): Promise<Conversation
         return [];
     }
 
-    return data || [];
+    // Filter out empty conversations with 0 messages
+    const filtered = (data || []).filter((c: any) => {
+        const count = c.chat_history?.[0]?.count || 0;
+        return count > 0;
+    });
+
+    return filtered.map((c: any) => ({
+        id: c.id,
+        user_id: c.user_id,
+        title: c.title,
+        created_at: c.created_at,
+        updated_at: c.updated_at
+    }));
 }
 
 /**

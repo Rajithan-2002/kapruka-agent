@@ -9,7 +9,7 @@ export class SearchProductsRule extends BaseRule {
     evaluate(context: RuleContext): RuleResult {
         const ue = context.understandingPlan;
 
-        if (ue.intent === 'SHOPPING' || ue.intent === 'GIFTING' || ue.intent === 'REORDER') {
+        if (ue.intent === 'SHOPPING' || ue.intent === 'GIFTING' || ue.intent === 'REORDER' || ue.intent === 'EXPLORATION') {
             const components = [];
             if (ue.product_type && ue.product_type !== 'UNKNOWN') components.push(ue.product_type);
             if (ue.situation?.recipient && ue.situation.recipient !== 'UNKNOWN') components.push(ue.situation.recipient);

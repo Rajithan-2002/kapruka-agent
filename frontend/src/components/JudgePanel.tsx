@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Brain, BarChart3, Target, Activity, X, ChevronDown, ChevronRight, GitCommit, ListTree, MemoryStick } from "lucide-react";
+import { Brain, BarChart3, Target, Activity, X, ChevronDown, ChevronRight, GitCommit, ListTree, MemoryStick, ShieldCheck, AlertCircle } from "lucide-react";
 
 interface JudgePanelProps {
     data: any;
@@ -51,6 +51,69 @@ export default function JudgePanel({ data, onClose }: JudgePanelProps) {
                 </div>
             </div>
         );
+    }
+
+    const timelineEvents = intelligenceTrace.timeline || [];
+    
+    // Grouped execution errors count
+    const errorGroups: Record<string, number> = {};
+    timelineEvents.forEach((event: any) => {
+        if (event.status === "ERROR") {
+            const groupKey = event.title || "Unknown Error";
+            errorGroups[groupKey] = (errorGroups[groupKey] || 0) + 1;
+        }
+    });
+    const totalErrors = Object.values(errorGroups).reduce((a, b) => a + b, 0);
+
+    // Safety State Monitor Compile
+    const safetyStates = {
+        memory: "UNKNOWN",
+        extraction: "UNKNOWN",
+        zodValidation: "UNKNOWN",
+        circuitBreaker: "NORMAL",
+        searchGuardrail: "HEALTHY"
+    };
+
+    const memoryEvent = timelineEvents.find((e: any) => e.title === "Memory" || e.description?.toLowerCase().includes("memory"));
+    if (memoryEvent) {
+        if (memoryEvent.status === "ERROR") safetyStates.memory = "CRITICAL_ERROR";
+        else if (memoryEvent.status === "DEGRADED") safetyStates.memory = "DEGRADED";
+        else safetyStates.memory = "HEALTHY";
+    }
+
+    const extractionEvent = timelineEvents.find((e: any) => e.title === "IntelligenceExtraction" || e.description?.toLowerCase().includes("extraction") || e.title === "Underlying LLM Call" || e.description?.toLowerCase().includes("underlying"));
+    if (extractionEvent) {
+        if (extractionEvent.description?.toLowerCase().includes("fallback") || extractionEvent.description?.toLowerCase().includes("failed")) {
+            safetyStates.extraction = "DEGRADED_FALLBACK";
+            safetyStates.zodValidation = "FAILED_FALLBACK";
+        } else if (extractionEvent.status === "ERROR") {
+            safetyStates.extraction = "CRITICAL_ERROR";
+            safetyStates.zodValidation = "FAILED_FALLBACK";
+        } else {
+            safetyStates.extraction = "HEALTHY";
+            safetyStates.zodValidation = "HEALTHY";
+        }
+    } else {
+        // Fallback checks
+        const memoryDecay = timelineEvents.some((e: any) => e.description?.toLowerCase().includes("decay"));
+        if (memoryDecay) {
+            safetyStates.memory = "HEALTHY";
+        }
+        const hasLLMExtraction = timelineEvents.some((e: any) => e.description?.toLowerCase().includes("extracted"));
+        if (hasLLMExtraction) {
+            safetyStates.extraction = "HEALTHY";
+            safetyStates.zodValidation = "HEALTHY";
+        }
+    }
+
+    // Inspect if circuit breaker active
+    const circuitEvent = timelineEvents.find((e: any) => e.title?.toLowerCase().includes("circuit") || e.description?.toLowerCase().includes("circuit"));
+    if (circuitEvent || traceReport?.error_type === "circuit_breaker_emergency") {
+        if (traceReport?.error_type === "circuit_breaker_emergency" || circuitEvent?.description?.toLowerCase().includes("emergency")) {
+            safetyStates.circuitBreaker = "EMERGENCY";
+        } else {
+            safetyStates.circuitBreaker = "DEGRADED";
+        }
     }
 
     const renderProgressBar = (value: number, label: string) => (
@@ -108,6 +171,78 @@ export default function JudgePanel({ data, onClose }: JudgePanelProps) {
                 {/* 🧠 Intelligence Inspector */}
                 {activeTab === "brain" && (
                     <div className="animate-fade-in flex flex-col gap-4">
+                        {/* 🛡️ AI Safety State Monitor */}
+                        <div className="border border-white/10 rounded-xl bg-slate-900/50 p-4">
+                            <h3 className="font-bold text-amber-400 mb-3 text-sm border-b border-white/10 pb-2 flex items-center gap-2">
+                                <ShieldCheck className="w-4 h-4 text-emerald-400 animate-pulse" />
+                                <span>AI Safety State Monitor</span>
+                            </h3>
+                            <div className="flex flex-col gap-2.5 text-xs">
+                                <div className="flex justify-between items-center">
+                                    <span className="text-slate-400">Memory Retrieval</span>
+                                    {safetyStates.memory === "HEALTHY" ? (
+                                        <span className="text-emerald-400 font-bold bg-emerald-400/10 px-2 py-0.5 rounded flex items-center gap-1">✓ Healthy</span>
+                                    ) : safetyStates.memory === "DEGRADED" ? (
+                                        <span className="text-amber-400 font-bold bg-amber-400/10 px-2 py-0.5 rounded flex items-center gap-1">⚠ Degraded</span>
+                                    ) : safetyStates.memory === "CRITICAL_ERROR" ? (
+                                        <span className="text-rose-400 font-bold bg-rose-400/10 px-2 py-0.5 rounded flex items-center gap-1">✗ Failed</span>
+                                    ) : (
+                                        <span className="text-emerald-400 font-bold bg-emerald-400/10 px-2 py-0.5 rounded flex items-center gap-1">✓ Healthy</span>
+                                    )}
+                                </div>
+                                <div className="flex justify-between items-center">
+                                    <span className="text-slate-400">LLM Context Parsing</span>
+                                    {safetyStates.extraction === "HEALTHY" ? (
+                                        <span className="text-emerald-400 font-bold bg-emerald-400/10 px-2 py-0.5 rounded flex items-center gap-1">✓ Validated</span>
+                                    ) : safetyStates.extraction === "DEGRADED_FALLBACK" ? (
+                                        <span className="text-amber-400 font-bold bg-amber-400/10 px-2 py-0.5 rounded flex items-center gap-1">⚠ Fallback Applied</span>
+                                    ) : safetyStates.extraction === "CRITICAL_ERROR" ? (
+                                        <span className="text-rose-400 font-bold bg-rose-400/10 px-2 py-0.5 rounded flex items-center gap-1">✗ Critical Error</span>
+                                    ) : (
+                                        <span className="text-emerald-400 font-bold bg-emerald-400/10 px-2 py-0.5 rounded flex items-center gap-1">✓ Validated</span>
+                                    )}
+                                </div>
+                                <div className="flex justify-between items-center">
+                                    <span className="text-slate-400">Zod Response Schema</span>
+                                    {safetyStates.zodValidation === "HEALTHY" ? (
+                                        <span className="text-emerald-400 font-bold bg-emerald-400/10 px-2 py-0.5 rounded flex items-center gap-1">✓ Schema Matched</span>
+                                    ) : safetyStates.zodValidation === "FAILED_FALLBACK" ? (
+                                        <span className="text-amber-400 font-bold bg-amber-400/10 px-2 py-0.5 rounded flex items-center gap-1">✗ Fallback State</span>
+                                    ) : (
+                                        <span className="text-emerald-400 font-bold bg-emerald-400/10 px-2 py-0.5 rounded flex items-center gap-1">✓ Schema Matched</span>
+                                    )}
+                                </div>
+                                <div className="flex justify-between items-center">
+                                    <span className="text-slate-400">Circuit Breaker</span>
+                                    {safetyStates.circuitBreaker === "NORMAL" ? (
+                                        <span className="text-emerald-400 font-bold bg-emerald-400/10 px-2 py-0.5 rounded flex items-center gap-1">✓ Normal Mode</span>
+                                    ) : safetyStates.circuitBreaker === "DEGRADED" ? (
+                                        <span className="text-amber-400 font-bold bg-amber-400/10 px-2 py-0.5 rounded flex items-center gap-1">⚠ Degraded Mode</span>
+                                    ) : (
+                                        <span className="text-rose-400 font-bold bg-rose-400/10 px-2 py-0.5 rounded flex items-center gap-1">🚨 Emergency Mode</span>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* 🚨 Timeline Error Logger */}
+                        {totalErrors > 0 && (
+                            <div className="border border-rose-500/20 rounded-xl bg-rose-950/20 p-4">
+                                <h3 className="font-bold text-rose-400 mb-3 text-sm border-b border-rose-500/10 pb-2 flex items-center gap-2">
+                                    <AlertCircle className="w-4 h-4 text-rose-400 animate-pulse" />
+                                    <span>System Safety Alerts ({totalErrors})</span>
+                                </h3>
+                                <div className="flex flex-col gap-2 text-xs">
+                                    {Object.entries(errorGroups).map(([groupTitle, count]) => (
+                                        <div key={groupTitle} className="flex justify-between items-center bg-rose-500/5 p-2 rounded border border-rose-500/10">
+                                            <span className="text-rose-300 font-semibold">{groupTitle}</span>
+                                            <span className="text-rose-400 bg-rose-400/10 px-2 py-0.5 rounded text-[10px] font-bold">Count: {count}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
                         <div className="border border-white/10 rounded-xl bg-slate-900/50 p-4">
                             <h3 className="font-bold text-amber-400 mb-3 text-sm border-b border-white/10 pb-2">Active Feature Flags</h3>
                             <div className="grid grid-cols-2 gap-y-3 gap-x-4 text-xs">

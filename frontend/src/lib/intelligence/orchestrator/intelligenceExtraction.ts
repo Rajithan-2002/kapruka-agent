@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import { ExtractionResult } from '../types/intelligence.types';
 import { IntelligenceTracer } from '../observability/tracer';
+import { ExtractionResultSchema, getSafeExtractionFallback } from '../validation/schemas';
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -14,8 +15,8 @@ const EXTRACTION_SCHEMA = {
     properties: {
       intent: {
         type: "string",
-        enum: ["SHOPPING", "GIFTING", "REORDER", "BROWSING", "DELIVERY", "TRACKING", "COMPLAINT", "SMALL_TALK", "PREFERENCE_CORRECTION", "PRICE_REFINEMENT", "UNKNOWN"],
-        description: "The primary intent of the user."
+        enum: ["SHOPPING", "GIFTING", "REORDER", "BROWSING", "DELIVERY", "TRACKING", "COMPLAINT", "SMALL_TALK", "PREFERENCE_CORRECTION", "PRICE_REFINEMENT", "EXPLORATION", "SOCIAL", "EMOTIONAL_SUPPORT", "FRUSTRATION", "LIFE_EVENT", "UNKNOWN"],
+        description: "The primary intent of the user. Use GIFTING if the user mentions buying a gift or looking for gift ideas/recommendations. Use EXPLORATION if the user explicitly says they don't know what they want. Use SOCIAL, EMOTIONAL_SUPPORT, FRUSTRATION, or LIFE_EVENT if they are venting, sharing personal details or expressing emotions (e.g. 'gf is angry', 'failed exam', 'had a fight')."
       },
       intentConfidence: {
         type: "number",
@@ -160,10 +161,21 @@ export async function runIntelligenceExtraction(
         content: `You are the Kapruka Intelligence Engine. Your job is to deeply understand the user's commerce request.
 You must extract the Intent, Situation, Psychology, and any Missing Information.
 Always analyze if the user is gifting or buying for themselves.
-If the user corrects or refines a previous recommendation (e.g., "No mugs", "My dad hates coffee", "Avoid flowers"), set intent to PREFERENCE_CORRECTION and populate preference_corrections array.
+
+If the user is venting, complaining about life, or sharing emotional/social situations (e.g. "my girlfriend is angry with me", "I failed my exam", "I had a big fight with my wife", "I am so stressed"), classify the intent as one of:
+- SOCIAL (general social updates or relationships)
+- EMOTIONAL_SUPPORT (seeking comfort, venting, emotional distress)
+- FRUSTRATION (expressing anger, annoyance, or disappointment)
+- LIFE_EVENT (milestones, exams, breakups, fights, celebrations)
+For these social distress/venting intents, set search_sufficiency_score to 0.0 and product_type to "UNKNOWN". Do NOT immediately trigger a product search. Keep the conversation warm and validating first, keeping the possibility of commerce/gifting open for later.
+
+If the user mentions buying a gift or looking for gift ideas/recommendations, the intent MUST be classified as GIFTING (even if recipient and occasion are not yet specified).
+If the user corrections or refines a previous recommendation (e.g., "No mugs", "My dad hates coffee", "Avoid flowers"), set intent to PREFERENCE_CORRECTION and populate preference_corrections array.
+If the user says they don't know what they want, have no idea, want a surprise, just show them something, or any variant indicating no specific product target, set intent to EXPLORATION. Examples: "I have no idea what I want", "surprise me", "just show me something", "idk", "I'm not sure", "help me decide", "no clue".
 If the user wants to filter or sort by price (e.g., "Under 5000", "Around 3000", "Show budget gifts", "Sort low to high"):
 - If they are filtering an EXISTING pool of recommendations, set intent to PRICE_REFINEMENT.
 - If this is a FRESH search (e.g., "list some juice items under 500", "I need a phone around 50000"), the intent MUST be SHOPPING or GIFTING, but you should STILL populate the price_refinement object.
+If the user is answering a question, describing features, specifications, or details of the product they want (e.g., "It should hold the rod", "blue color", "cotton material", "under 5000 LKR"), they are refining their search. In this case, you MUST classify the intent as SHOPPING (or GIFTING if it's a gift request) and carry over the product_type from the conversation history if it is not explicitly mentioned in the current turn (e.g., if they previously wanted a shower caddy, set product_type to "shower caddy" or "hangable container").
 CRITICAL: Always map the request to the most appropriate 'mapped_category'. Example: 'healthy snacks' -> 'GROCERY'. 'birthday cake' -> 'CAKES'.
 Minimum Viable Context (MVC) Rules:
 - Gifting: MVC is met if Recipient OR Occasion is present.
@@ -171,6 +183,7 @@ Minimum Viable Context (MVC) Rules:
 - Reorder: MVC is met if Reorder Intent is present.
 - Preference Correction: MVC is met.
 - Price Refinement: MVC is met.
+- Social/Venting (SOCIAL, EMOTIONAL_SUPPORT, FRUSTRATION, LIFE_EVENT): MVC is met.
 If MVC is not met, mark isMissingCriticalInfo as true.
 Do NOT hallucinate information. If something is unknown, mark it as UNKNOWN.
 CRITICAL RULE: "Earn the right to ask questions". Do NOT ask for Recipient or Occasion if the user just asks for "juice" or a simple product. Only ask questions if they materially improve the recommendation.`
@@ -192,13 +205,25 @@ CRITICAL RULE: "Earn the right to ask questions". Do NOT ask for Recipient or Oc
       throw new Error("Failed to extract intelligence context");
     }
 
-    const extractedData = JSON.parse(toolCall.function.arguments) as ExtractionResult;
+    const rawArgs = JSON.parse(toolCall.function.arguments);
     
-    trace.end(extractedData, extractedData.intentConfidence || 1.0, "Successfully extracted context via LLM");
+    // Zod Response Schema Validation
+    const parsed = ExtractionResultSchema.safeParse(rawArgs);
+    if (!parsed.success) {
+      console.warn("Zod schema validation failed for LLM extraction output:", parsed.error);
+      const fallback = getSafeExtractionFallback(userMessage);
+      trace.end(fallback, 0.0, "Validation failed; applied safe fallback state");
+      return fallback as any as ExtractionResult;
+    }
+    
+    const extractedData = parsed.data as any as ExtractionResult;
+    trace.end(extractedData, extractedData.intentConfidence || 1.0, "Successfully extracted and validated context via LLM");
     return extractedData;
     
   } catch (error: any) {
-    trace.end({ error: error.message }, 0, "Extraction failed");
-    throw error;
+    console.error("runIntelligenceExtraction encountered an error, applying fallback:", error);
+    const fallback = getSafeExtractionFallback(userMessage);
+    trace.end(fallback, 0.0, `Extraction failed with error: ${error.message}; fallback applied`);
+    return fallback as any as ExtractionResult;
   }
 }

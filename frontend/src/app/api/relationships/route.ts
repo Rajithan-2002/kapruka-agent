@@ -6,7 +6,10 @@ import {
     getMemories,
     addRelationship,
     addPreference,
-    addMemory
+    addMemory,
+    deleteRelationship,
+    updateRelationship,
+    deletePreference
 } from "@/lib/services/memoryService";
 
 export async function GET(request: Request) {
@@ -100,3 +103,52 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 }
+
+export async function PUT(request: Request) {
+    try {
+        const supabase = await createClient();
+        const { data: { user } } = await supabase.auth.getUser();
+        const userId = user ? user.id : "00000000-0000-0000-0000-000000000000";
+
+        const body = await request.json();
+        const { relationshipId, updates } = body;
+
+        if (!relationshipId || !updates) {
+            return NextResponse.json({ error: "Missing relationshipId or updates" }, { status: 400 });
+        }
+
+        const updatedRel = await updateRelationship(userId, relationshipId, updates);
+        return NextResponse.json({ success: true, relationship: updatedRel });
+    } catch (error: any) {
+        console.error("Relationships PUT error:", error);
+        return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+}
+
+export async function DELETE(request: Request) {
+    try {
+        const supabase = await createClient();
+        const { data: { user } } = await supabase.auth.getUser();
+        const userId = user ? user.id : "00000000-0000-0000-0000-000000000000";
+
+        const { searchParams } = new URL(request.url);
+        const relationshipId = searchParams.get("relationshipId");
+        const preferenceId = searchParams.get("preferenceId");
+
+        if (relationshipId) {
+            await deleteRelationship(userId, relationshipId);
+            return NextResponse.json({ success: true, message: "Relationship deleted successfully" });
+        }
+
+        if (preferenceId) {
+            await deletePreference(userId, preferenceId);
+            return NextResponse.json({ success: true, message: "Preference deleted successfully" });
+        }
+
+        return NextResponse.json({ error: "Missing relationshipId or preferenceId" }, { status: 400 });
+    } catch (error: any) {
+        console.error("Relationships DELETE error:", error);
+        return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+}
+

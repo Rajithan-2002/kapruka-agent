@@ -28,6 +28,7 @@ import {
 import { createConversation, generateConversationTitle } from "@/lib/services/conversationsService";
 import { deduplicateProducts } from "@/lib/deduplication";
 import { getCategoryAliases } from "@/lib/intelligence/dictionaries/categoryAliases";
+import { logCommunityAction } from "@/lib/intelligence/feedback/feedbackService";
 import { translateSearchQuery } from "@/lib/translation";
 import { ProductAdapter } from "@/lib/intelligence/types/ProductAdapter";
 import { CanonicalProductV1 } from "@/lib/intelligence/types/CanonicalProduct";
@@ -41,26 +42,96 @@ const openai = new OpenAI({
 import { KAPPY_PERSONA_INSTRUCTION } from "@/lib/masterPrompt";
 
 export async function POST(request: Request) {
+    // Initialize trace and decision ids for full pipeline correlation
+    const traceId = randomUUID();
+    const decisionId = randomUUID();
+    const sessionTraces: any[] = [];
+    const traceStartTime = Date.now();
+
     try {
+        const { CircuitBreaker } = await import("@/lib/intelligence/services/circuitBreaker");
+        const circuitState = CircuitBreaker.getState();
+        
+        if (circuitState === "EMERGENCY") {
+            const emergencyResponse = {
+                role: "assistant",
+                content: "I'm running in degraded safe mode right now 😅 How can I help you browse Kapruka today?",
+                traceReport: {
+                    trace_id: traceId,
+                    success: false,
+                    error_type: "circuit_breaker_emergency",
+                    user_message: "I'm running in degraded safe mode right now 😅 How can I help you browse Kapruka today?",
+                    recoverable: true
+                },
+                judgeModeTrace: {
+                    timeline: [
+                        { stepIndex: 1, title: "Circuit Breaker", description: "EMERGENCY state active. Bypass processing.", durationMs: 0, status: "ERROR" }
+                    ],
+                    featureFlags: { personalization: false, memories: false, circuitBreaker: true },
+                    totalDurationMs: 0,
+                    confidences: { intent: 0.1, memory: 0.1, recommendation: 0.1 }
+                }
+            };
+            return new NextResponse(JSON.stringify(emergencyResponse), {
+                headers: { "Content-Type": "application/json" }
+            });
+        }
+
         const supabase = await createClient();
         const { data: { user } } = await supabase.auth.getUser();
 
         const userId = user ? user.id : "00000000-0000-0000-0000-000000000000";
+        const fullName = user?.user_metadata?.full_name || user?.user_metadata?.name || "";
+        const firstName = fullName ? fullName.split(" ")[0] : "";
+        const userName = firstName || "friend";
 
         const { message, history, sessionId } = await request.json();
         const activeSessionId = sessionId || `session-${Date.now()}`;
-        
-        // Initialize trace and decision ids for full pipeline correlation
-        const traceId = randomUUID();
-        const decisionId = randomUUID();
-        const sessionTraces: any[] = [];
-        const traceStartTime = Date.now();
 
         // Record interaction for progressive relationship building
         await recordInteraction(userId);
 
-        // 1. Retrieve Memories from Database using new services
-        const rawMemories = await getMemories(userId);
+        let rawMemories: any[] = [];
+        let rawProfile: any = null;
+        let rawRelationships: any[] = [];
+        let rawPreferences: any[] = [];
+        let rawBehaviorProfile: any = null;
+        let userContextBlock = "";
+        let purchases: any[] = [];
+
+        const dbStartTime = Date.now();
+        try {
+            if (circuitState === "DEGRADED") {
+                console.warn("[CircuitBreaker] DEGRADED state. Skipping personalization DB fetches.");
+                rawMemories = [];
+                rawProfile = { primary_language: "singlish", communication_style: "casual", average_budget: 6000 };
+                rawRelationships = [];
+                rawPreferences = [];
+                rawBehaviorProfile = { favorite_categories: [], favorite_price_range: { min: 0, max: 0, avg: 0 }, total_purchases: 0, total_interactions: 0, relationship_strength: 0, personality_stage: 'new_acquaintance' };
+                userContextBlock = "Degraded mode active. Personalization skipped.";
+                purchases = [];
+            } else {
+                rawMemories = (await getMemories(userId)) || [];
+                rawProfile = await getProfile(userId);
+                rawRelationships = (await getRelationships(userId)) || [];
+                rawPreferences = (await getPreferences(userId)) || [];
+                rawBehaviorProfile = await getBehaviorProfile(userId);
+                userContextBlock = await buildUserContext(userId);
+                purchases = (await getPurchaseHistory(userId, 10)) || [];
+            }
+            CircuitBreaker.recordSuccess(Date.now() - dbStartTime);
+        } catch (dbError) {
+            console.error("Database fetch failure inside route.ts, triggering Circuit Breaker:", dbError);
+            CircuitBreaker.recordFailure();
+            rawMemories = [];
+            rawProfile = { primary_language: "singlish", communication_style: "casual", average_budget: 6000 };
+            rawRelationships = [];
+            rawPreferences = [];
+            rawBehaviorProfile = { favorite_categories: [], favorite_price_range: { min: 0, max: 0, avg: 0 }, total_purchases: 0, total_interactions: 0, relationship_strength: 0, personality_stage: 'new_acquaintance' };
+            userContextBlock = "Degraded mode active due to database error.";
+            purchases = [];
+        }
+
         const { MemoryConflictResolver } = await import("@/lib/intelligence/memory/conflictResolver");
         const { MemoryDecayEngine } = await import("@/lib/intelligence/memory/decayEngine");
         const { MemoryRelevanceEngine } = await import("@/lib/intelligence/memory/relevanceEngine");
@@ -93,18 +164,28 @@ export async function POST(request: Request) {
                 selectedCount: relevanceResult.relevantMemories.length,
                 maxConfidence: relevanceResult.relevantMemories.length > 0 ? 0.9 : 0 
             },
-            "HEALTHY"
+            circuitState === "DEGRADED" ? "DEGRADED" : "HEALTHY"
         );
         sessionTraces.push(memoryTrace);
 
-        const profile = await getProfile(userId);
-        const relationships = await getRelationships(userId);
-        const preferences = await getPreferences(userId);
-        const memories = rawMemories;
-        const userContextBlock = await buildUserContext(userId);
+        // Run through Profile Normalizer Gateway
+        const { normalizeUserContext } = await import("@/lib/intelligence/normalization/profileNormalizer");
+        const normalizedContext = normalizeUserContext({
+            userProfile: rawProfile,
+            behaviorProfile: rawBehaviorProfile,
+            relationships: rawRelationships,
+            preferences: rawPreferences,
+            memories: rawMemories
+        });
+
+        // Re-assign normalized context as downstream constants
+        const profile = normalizedContext.userProfile;
+        const relationships = normalizedContext.relationships;
+        const preferences = normalizedContext.preferences;
+        const memories = normalizedContext.memories;
+        const behaviorProfile = normalizedContext.behaviorProfile;
+
         const userTone = await getUserTone(userId);
-        const behaviorProfile = await getBehaviorProfile(userId);
-        const purchases = await getPurchaseHistory(userId, 10);
 
         // Chat history is now loaded conditionally below based on Understanding Engine.
 
@@ -148,7 +229,7 @@ export async function POST(request: Request) {
         // Create a backward-compatible understandingPlan for legacy route.ts logic
         const understandingPlan: any = {
             intent: intelligence.intent,
-            is_shopping_request: ["SHOPPING", "GIFTING", "REORDER", "BROWSING", "PRICE_REFINEMENT", "PREFERENCE_CORRECTION"].includes(intelligence.intent || ""),
+            is_shopping_request: ["SHOPPING", "GIFTING", "REORDER", "BROWSING", "PRICE_REFINEMENT", "PREFERENCE_CORRECTION", "EXPLORATION"].includes(intelligence.intent || ""),
             unsupported_domain: null,
             product_type: intelligence.product_type || "UNKNOWN",
             situation: intelligence.situation,
@@ -161,6 +242,37 @@ export async function POST(request: Request) {
             mapped_category: intelligence.mapped_category || "UNKNOWN",
             intelligenceData: intelligence
         };
+
+        // Exploration Query Builder
+        if (intelligence.intent === "EXPLORATION") {
+            const favoriteCategories = behaviorProfile?.favorite_categories || [];
+            const userPrefs = preferences || [];
+            
+            // Extract top categories and interests to formulate a personalized exploration query
+            const categories = favoriteCategories.slice(0, 3);
+            const interests = userPrefs
+                .filter(p => p.interest && p.interest !== "UNKNOWN")
+                .slice(0, 3)
+                .map(p => p.interest);
+                
+            const queryTerms = [...categories, ...interests];
+            let explorationQuery = "popular gifts";
+            if (queryTerms.length > 0) {
+                explorationQuery = queryTerms.join(" ");
+            }
+            
+            // Override understandingPlan values
+            understandingPlan.product_type = explorationQuery;
+            understandingPlan.extracted_product_type = { type: explorationQuery, confidence: 1.0 };
+            
+            // Force intelligenceData properties
+            if (understandingPlan.intelligenceData) {
+                understandingPlan.intelligenceData.product_type = explorationQuery;
+                understandingPlan.intelligenceData.readyForRecommendation = true;
+                understandingPlan.intelligenceData.interaction_mode = "DISCOVERY";
+                understandingPlan.intelligenceData.recommendation_mode = "FAST";
+            }
+        }
 
         // Hardcoded Intent mapping for UI Quick Tap Chips
         const exactMessage = message.trim();
@@ -181,12 +293,37 @@ export async function POST(request: Request) {
              understandingPlan.product_type = "UNKNOWN";
         }
 
-        // Force SHOPPING intent for short product queries (e.g., "flower", "toys")
-        const words = message.trim().split(/\s+/);
-        const greetingKeywords = ["hi", "hello", "hey", "sup", "yo", "ado", "machan", "morning", "afternoon", "evening", "kappy", "kapri"];
-        const hasGreeting = words.some((w: string) => greetingKeywords.includes(w.toLowerCase().replace(/[^a-z]/g, '')));
+        // ------------------------------------------------------------
+        // GREETING DETECTION & BYPASS (Sinhala, Tamil, English)
+        // ------------------------------------------------------------
+        const greetingKeywords = [
+            // English
+            "hi", "hii", "hiii", "hello", "helloo", "hey", "heyy", "heyyy", "yo", "yoo", "sup", "whats up", "whatsup", "greetings", "kappy", "kapri",
+            "morning", "afternoon", "evening", "good morning", "good afternoon", "good evening",
+            // Sinhala
+            "ayubowan", "ayubowang", "subha dawasak", "subha udasanak", "subha sandhyawak", "machan", "macha", "ado", "kohomada", "sapa", "sapa kiyala", "koheda", "halow", "halo",
+            // Tamil
+            "vanakkam", "vanakam", "வணக்கம்", "machi", "thala", "thalaiva", "sari", "enna machi", "nalla irukkingala", "nalama"
+        ];
         
-        if (words.length > 0 && words.length <= 3 && !hasGreeting && (!understandingPlan.is_shopping_request || understandingPlan.intent === "UNCLEAR")) {
+        const cleanMessage = message.trim().toLowerCase().replace(/[^a-z0-9\s\u0B80-\u0BFF]/g, '');
+        const words = cleanMessage.split(/\s+/);
+        
+        const hasGreeting = words.some((w: string) => greetingKeywords.includes(w)) || 
+                            greetingKeywords.some((g: string) => cleanMessage === g || cleanMessage.startsWith(g + " "));
+
+        if (hasGreeting || understandingPlan.intent === "GREETING" || understandingPlan.intent === "SMALL_TALK") {
+            understandingPlan.intent = "GREETING";
+            understandingPlan.is_shopping_request = false;
+            understandingPlan.product_type = "UNKNOWN";
+            if (understandingPlan.intelligenceData) {
+                understandingPlan.intelligenceData.intent = "GREETING";
+                understandingPlan.intelligenceData.readyForRecommendation = false;
+            }
+        }
+
+        // Force SHOPPING intent for short product queries (e.g., "flower", "toys")
+        if (!hasGreeting && words.length > 0 && words.length <= 3 && (!understandingPlan.is_shopping_request || understandingPlan.intent === "UNCLEAR")) {
              understandingPlan.intent = "SHOPPING";
              understandingPlan.is_shopping_request = true;
              understandingPlan.product_type = message;
@@ -402,6 +539,8 @@ export async function POST(request: Request) {
         // 5. EXECUTE MCP TOOL OR RUN LOGIC
         let toolResults: unknown = null;
         let productsList: any[] = [];
+        let isAllRequested = false;
+        let initialVisibleCount = 6;
         let previousSearchSession: any | null = null;
         let trackingData: any = null;
         let traceReport: any = null;
@@ -417,7 +556,7 @@ export async function POST(request: Request) {
             error_details: null as string | null
         };
 
-        const nonShoppingIntents = ["GREETING", "SMALL_TALK", "CAPABILITY_QUESTION", "ABOUT_AGENT", "GRATITUDE", "ACKNOWLEDGMENT", "CANCELLATION", "FRUSTRATION", "COMPLAINT", "PARTIAL_CONTEXT", "AMBIGUOUS", "OBSERVATION", "EXPLORATION", "FEEDBACK", "EMPTY_OR_TEST", "ORDER_ISSUE", "TRACK_ORDER", "TRACKING", "DELIVERY"];
+        const nonShoppingIntents = ["GREETING", "SMALL_TALK", "CAPABILITY_QUESTION", "ABOUT_AGENT", "GRATITUDE", "ACKNOWLEDGMENT", "CANCELLATION", "FRUSTRATION", "COMPLAINT", "PARTIAL_CONTEXT", "AMBIGUOUS", "OBSERVATION", "FEEDBACK", "EMPTY_OR_TEST", "ORDER_ISSUE", "TRACK_ORDER", "TRACKING", "DELIVERY", "UNKNOWN"];
 
         if (plan.route === 'clarification') {
             toolExecutionTrace.status = "clarification";
@@ -481,6 +620,8 @@ export async function POST(request: Request) {
                 toolResults = { status: "failed", error: "Could not find that product in your past orders." };
             }
         } else if (plan.mcp_tool_needed === "show_more" || (plan.mcp_tool_needed === "kapruka_search_products" && plan.mcp_search_query)) {
+            const recipientVal = understandingPlan.recipient?.type || "mother";
+            const occasionVal = understandingPlan.occasion?.type || "birthday";
             const mode = plan.recommendation_mode || "recommendation";
             let finalRankedList: any[] = [];
             let cacheRemaining = 0;
@@ -631,7 +772,7 @@ export async function POST(request: Request) {
                     situation: understandingPlan.occasion?.type || "birthday",
                     recipient: understandingPlan.recipient?.type || "mother",
                     recipientPreferences: recipientPrefs,
-                    targetBudget: understandingPlan.budget?.target || profile?.average_budget || 6000,
+                    targetBudget: understandingPlan.budget?.target || 0,
                     userIntent: plan.shopping_stage || plan.mcp_search_query || "",
                     purchaseCategories
                 };
@@ -639,6 +780,8 @@ export async function POST(request: Request) {
                 // Phase 3: New Recommendation Affinity & Ranking Pipeline
                 const { AffinityEngine } = await import("@/lib/intelligence/recommendation/affinityEngine");
                 const { RankingEngine } = await import("@/lib/intelligence/recommendation/rankingEngine");
+                const { getV15CommunityScores, getTrendScores } = await import("@/lib/intelligence/feedback/feedbackService");
+                const { CommunityFeedbackEngine } = await import("@/lib/intelligence/feedback/communityFeedbackEngine");
                 
                 // Fetch Query Intelligence
                 const qb = await createClient();
@@ -650,12 +793,32 @@ export async function POST(request: Request) {
 
                 const userAffinities = await AffinityEngine.getAffinities(userId);
 
+                // Refers to outer scope recipientVal and occasionVal
+                const categoryVal = understandingPlan.mapped_category || "UNKNOWN";
+                const strategyVal = "general";
+
+                const contextKey = CommunityFeedbackEngine.generateContextKey(
+                    recipientVal,
+                    occasionVal,
+                    categoryVal,
+                    strategyVal
+                );
+
+                const productIds = approvedMcpProducts.map(p => p.id || p.product_id);
+                const communityScores = await getV15CommunityScores(productIds, contextKey, recipientVal, occasionVal);
+                const trendScores = await getTrendScores(productIds);
+
                 const rankingContext = {
                     searchQuery: plan.mcp_search_query || "",
-                    situation: understandingPlan.situation || {},
-                    memoryTags: activeContextTags,
+                    situation: occasionVal,
+                    recipient: recipientVal,
+                    targetBudget: understandingPlan.budget?.target || 0,
                     userAffinities,
-                    queryIntelligence: queryIntelligenceData || []
+                    communityScores,
+                    trendScores,
+                    queryIntelligence: queryIntelligenceData || [],
+                    memoryTags: activeContextTags,
+                    isBudgetExplicit: !!understandingPlan.budget?.target
                 };
 
                 rankingStartTime = Date.now();
@@ -933,8 +1096,16 @@ export async function POST(request: Request) {
             // Slice the top results based on MVC Mode and Diversity
             const mvcMode = understandingPlan.intelligenceData?.recommendation_mode || "FAST";
             const interactionMode = understandingPlan.intelligenceData?.interaction_mode || "RECOMMENDATION";
-            const isAllRequested = message.toLowerCase().includes("all") || message.toLowerCase().includes("every");
-            const displayLimit = isAllRequested ? 50 : (mvcMode === "PRECISION" ? 8 : 6);
+            const lowerMessage = message.toLowerCase();
+            isAllRequested = lowerMessage.includes("all") || 
+                             lowerMessage.includes("every") || 
+                             lowerMessage.includes("expand") ||
+                             lowerMessage.includes("everything") ||
+                             lowerMessage.includes("at once") ||
+                             lowerMessage.includes("whole") ||
+                             lowerMessage.includes("complete");
+            initialVisibleCount = mvcMode === "PRECISION" ? 8 : 6;
+            const displayLimit = 40;
 
             // -----------------------------------------------------------------
             // PIPELINE INCONSISTENCY DETECTION
@@ -994,6 +1165,14 @@ export async function POST(request: Request) {
             const allDisplayedIds = [...Array.from(displayedIdsSet), ...newlyDisplayedIds];
 
             // Highlight Top 3
+            const getBudgetRange = (amount: number): string => {
+                if (amount <= 3000) return "BUDGET";
+                if (amount <= 10000) return "MID";
+                if (amount <= 50000) return "PREMIUM";
+                return "LUXURY";
+            };
+            const budgetRangeStr = getBudgetRange(understandingPlan.budget?.target || 6000);
+
             productsList.forEach((prod: any, idx) => {
                 if (idx < 3) prod.isHighlighted = true;
                 const logEntry = logs.find(l => l.productId === prod.id);
@@ -1001,19 +1180,33 @@ export async function POST(request: Request) {
                     logEntry.isDisplayed = true;
                     logEntry.isHighlighted = prod.isHighlighted;
                 }
+
+                // Track 'view' event for every recommended product
+                logCommunityAction(
+                    userId,
+                    prod.id,
+                    "view",
+                    recipientVal,
+                    occasionVal,
+                    budgetRangeStr
+                ).catch(e => console.error("Error logging view community action:", e));
             });
 
             // Save to Session Cache
             if (!poolExhausted && (plan.mcp_tool_needed === "kapruka_search_products" || sessionObj)) {
+                const unfilteredPool = (plan.mcp_tool_needed === "kapruka_search_products")
+                    ? (rankingResult?.ranked || finalRankedList)
+                    : (sessionObj?.products || finalRankedList);
+
                 await saveSearchSession({
                     chat_session_id: activeSessionId,
                     user_id: userId,
                     query: plan.mcp_search_query || sessionObj?.query || "show_more",
-                    total_products: finalRankedList.length,
+                    total_products: unfilteredPool.length,
                     displayed_count: allDisplayedIds.length,
                     displayed_ids: allDisplayedIds,
                     remaining_count: cacheRemaining,
-                    products: finalRankedList,
+                    products: unfilteredPool,
                     pool_version: sessionObj?.pool_version || `pool-${Date.now()}`,
                     refinement_history: refinementHistory,
                     active_exclusions: activeExclusions,
@@ -1239,10 +1432,11 @@ CRITICAL TONE RULES:
 ${KAPPY_PERSONA_INSTRUCTION}
 
 [USER BEHAVIORAL PROFILE & STAGE]
-- Personality stage: ${behaviorProfile.personality_stage}
-- Relationship strength: ${behaviorProfile.relationship_strength.toFixed(2)}
-- Favorite categories: ${behaviorProfile.favorite_categories.join(", ") || "None yet"}
-- Standard budget range: Min: ${behaviorProfile.favorite_price_range.min} LKR, Max: ${behaviorProfile.favorite_price_range.max} LKR
+- Name: ${userName}
+- Personality stage: ${behaviorProfile?.personality_stage || "new_acquaintance"}
+- Relationship strength: ${(behaviorProfile?.relationship_strength || 0).toFixed(2)}
+- Favorite categories: ${(behaviorProfile?.favorite_categories || []).join(", ") || "None yet"}
+- Standard budget range: Min: ${behaviorProfile?.favorite_price_range?.min || 0} LKR, Max: ${behaviorProfile?.favorite_price_range?.max || 0} LKR
 
 [ACTIVE SHOPPING JOURNEY]
 - Occasion: ${snapshot?.occasion || "None specified"}
@@ -1282,9 +1476,22 @@ Based on the Master System Prompt rules and the above context, generate Kapri's 
 5. EXPLICIT TOOL STATUS RULES:
    - If Tool Results status is "failed", DO NOT say "Let me check" or "Hang tight". Acknowledge the failure honestly ("I couldn't retrieve that information right now. Want me to try again?").
    - If Tool Results status is "cancelled", acknowledge the cancellation naturally ("No problem at all! What else can I help with?").
-${understandingPlan.intelligenceData?.nextQuestion && understandingPlan.intelligenceData.nextQuestion !== "None" ? `6. PROGRESSIVE REFINEMENT RULE:
+${understandingPlan.intent === "GREETING" ? `6. GREETING MODE RULES:
+   - The user just greeted you. Keep it warm, casual, and friendly.
+   - Greet the user by their name: "${userName}" if it is not "friend". Otherwise, use a friendly Sri Lankan term ("machan", "macha", "buddy") or language-appropriate greeting.
+   - DO NOT list or suggest any products.
+   - Prompt them naturally to tell you what they would like to search for today.
+   - Use the language they used:
+     - English: e.g., "Hey [Name]! Whats up? What are we gonna search for today?"
+     - Sinhala/Singlish: e.g., "Kohomada [Name]? Ada mokakda search karanna one?"
+     - Tamil/Tanglish: e.g., "Enna [Name], eppadi irukkinga? Inniku enna search panna porom?"
+` : (understandingPlan.intent === "EXPLORATION" ? `6. EXPLORATION MODE RULES:
+   - The user doesn't know what they want. You have pulled some products to inspire them. Present them casually, not as definitive recommendations (e.g., 'Let me show you some things people love' or 'Here are some ideas to get you started').
+   - Naturally ask the refinement/lead question below to narrow down their intent.
+` : "")}
+${understandingPlan.intent !== "GREETING" && understandingPlan.intelligenceData?.nextQuestion && understandingPlan.intelligenceData.nextQuestion !== "None" ? `7. PROGRESSIVE REFINEMENT RULE:
    - You MUST ask the following refinement question at the very end of your response after naturally introducing the products.
-   - Refinement Question: "${understandingPlan.intelligenceData.nextQuestion}"` : `6. DO NOT ask any follow-up questions or clarification questions. Just introduce the products naturally.`}
+   - Refinement Question: "${understandingPlan.intelligenceData.nextQuestion}"` : (understandingPlan.intent === "GREETING" ? "" : `7. DO NOT ask any follow-up questions or clarification questions. Just introduce the products naturally.`)}
 `;
 
         // Retrieve active context tags from database for fallback
@@ -1353,6 +1560,8 @@ ${understandingPlan.intelligenceData?.nextQuestion && understandingPlan.intellig
         };
         if (productsList.length > 0) {
             dataPayload.products = productsList;
+            dataPayload.isAllRequested = isAllRequested;
+            dataPayload.initialVisibleCount = initialVisibleCount;
 
             // --- KAPPY INTELLIGENCE ENGINE V1: DECISION SUPPORT & CONFIDENCE ---
             const { DecisionSupportEngine } = await import("@/lib/intelligence/decision/decisionSupport");
@@ -1386,6 +1595,8 @@ ${understandingPlan.intelligenceData?.nextQuestion && understandingPlan.intellig
                     detected_tone: detectedTone,
                     products_shown: productsList.length,
                     products_list: productsList,
+                    isAllRequested,
+                    initialVisibleCount,
                     tracking_data: trackingData,
                     bundleOptions: bundleOptions,
                     giftMessages: giftMessageOptions,
@@ -1407,20 +1618,58 @@ ${understandingPlan.intelligenceData?.nextQuestion && understandingPlan.intellig
     } catch (error: unknown) {
         console.error("Kappy Reasoning Loop Error:", error);
 
-        // Handle OpenAI API rate limit (429) gracefully
         const errMsg = error instanceof Error ? error.stack || error.message : (typeof error === 'object' ? JSON.stringify(error, null, 2) : String(error));
-        if (errMsg.includes("429") || errMsg.toLowerCase().includes("quota") || errMsg.toLowerCase().includes("rate limit")) {
-            return new NextResponse(JSON.stringify({
-                role: "assistant",
-                content: "I'm a bit overloaded right now 😅 Could you try again in just a moment?"
-            }), {
-                headers: { "Content-Type": "application/json" }
-            });
+        
+        // Record failure in Circuit Breaker
+        try {
+            const { CircuitBreaker } = await import("@/lib/intelligence/services/circuitBreaker");
+            CircuitBreaker.recordFailure();
+        } catch (_) {}
+
+        const errorType = errMsg.includes("429") || errMsg.toLowerCase().includes("quota") || errMsg.toLowerCase().includes("rate limit")
+            ? "rate_limit_exceeded"
+            : errMsg.includes("OpenAI") || errMsg.includes("openai") ? "llm_failure" 
+            : errMsg.includes("Database") || errMsg.includes("supabase") || errMsg.includes("db") ? "database_failure" 
+            : "orchestrator_failure";
+
+        const generatedTraceId = `err_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+
+        // Log the failure execution trace
+        try {
+            await TraceCollector.logExecution(
+                traceId,
+                decisionId,
+                "UNDERSTANDING",
+                0,
+                { error: errMsg },
+                { error_type: errorType, trace_id: generatedTraceId },
+                "ERROR"
+            );
+        } catch (_) {}
+
+        let friendlyMsg = "Machan, sorry, my brain encountered a temporary glitch. Let's try again in a bit! 😕";
+        if (errorType === "rate_limit_exceeded") {
+            friendlyMsg = "I'm a bit overloaded right now 😅 Could you try again in just a moment?";
         }
 
+        const safetyTimeline = [
+            { stepIndex: 1, title: "Exception Handler", description: `Error: ${errorType}. Details: ${errMsg.slice(0, 100)}`, durationMs: 0, status: "ERROR" }
+        ];
+
         return new NextResponse(JSON.stringify({
+            success: false,
+            error_type: errorType,
+            user_message: friendlyMsg,
+            trace_id: generatedTraceId,
+            recoverable: true,
             role: "assistant",
-            content: `CRASH DEBUG: ${errMsg}`
+            content: `${friendlyMsg} (Trace ID: ${generatedTraceId})`,
+            judgeModeTrace: {
+                timeline: safetyTimeline,
+                featureFlags: { personalization: false, memories: false },
+                totalDurationMs: 0,
+                confidences: { intent: 0.0, memory: 0.0, recommendation: 0.0 }
+            }
         }), {
             headers: { "Content-Type": "application/json" }
         });

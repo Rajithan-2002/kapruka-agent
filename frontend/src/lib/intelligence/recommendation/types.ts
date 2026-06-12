@@ -7,5 +7,7 @@ export interface RecommendationCandidate {
     budgetScore: number;
     affinityScore: number;
     memoryBoostScore: number;
+    communityScore?: number;
+    trendScore?: number;
     finalScore: number;
 }
