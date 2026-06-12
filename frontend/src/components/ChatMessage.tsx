@@ -45,6 +45,8 @@ export interface Message {
     reassurances?: string[];
     transparencyMessage?: string;
     followUpSuggestions?: string[];
+    isAllRequested?: boolean;
+    initialVisibleCount?: number;
 }
 
 interface ChatMessageProps {
@@ -64,11 +66,45 @@ export default function ChatMessage({ message, isDebugMode = false, userId, sess
     const [expandedProducts, setExpandedProducts] = useState<Record<string, boolean>>({});
     const [feedbackSubmitted, setFeedbackSubmitted] = useState<Record<string, "RELEVANT" | "NOT_RELEVANT">>({});
 
+    // Pagination state
+    const initialVisibleCount = message.isAllRequested ? (products?.length || 0) : (message.initialVisibleCount || 6);
+    const [visibleCount, setVisibleCount] = useState<number>(initialVisibleCount);
+
+    const END_OF_LIST_PHRASES = [
+        "That's all the matching products we found!",
+        "You've seen all the available recommendations.",
+        "End of matching products.",
+        "These are all the options matching your request."
+    ];
+    const phraseIndex = message.id ? Array.from(message.id).reduce((sum, char) => sum + char.charCodeAt(0), 0) % END_OF_LIST_PHRASES.length : 0;
+    const endOfListMessage = END_OF_LIST_PHRASES[phraseIndex];
+
     const toggleExpand = (productId: string) => {
+        const nextState = !expandedProducts[productId];
         setExpandedProducts(prev => ({
             ...prev,
-            [productId]: !prev[productId]
+            [productId]: nextState
         }));
+
+        if (nextState) {
+            const product = products?.find(p => p.id === productId);
+            if (product) {
+                fetch("/api/track", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        product: {
+                            id: product.id,
+                            name: product.name,
+                            category: product.category || "General",
+                            price: product.price
+                        },
+                        action: "expand",
+                        sessionContext: { sessionId }
+                    })
+                }).catch(err => console.error("Error tracking expand:", err));
+            }
+        }
     };
 
     const submitFeedback = async (product: Product, type: "RELEVANT" | "NOT_RELEVANT") => {
@@ -222,7 +258,7 @@ export default function ChatMessage({ message, isDebugMode = false, userId, sess
 
                     {/* Clean Product Grid */}
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 w-full">
-                        {products.map((product, index) => {
+                        {products.slice(0, visibleCount).map((product, index) => {
                             const isExpanded = !!expandedProducts[product.id];
                             const reasoningBullets = getReasoningBullets(product, content);
 
@@ -372,6 +408,28 @@ export default function ChatMessage({ message, isDebugMode = false, userId, sess
                                 </div>
                             );
                         })}
+
+                        {products.length > visibleCount && (
+                            <div className="col-span-full flex flex-col items-center justify-center w-full mt-4 py-4 border-t border-slate-100 space-y-2.5">
+                                <p className="text-xs text-slate-500 font-semibold">
+                                    We have more options waiting. Would you like to see?
+                                </p>
+                                <button
+                                    onClick={() => setVisibleCount(prev => Math.min(prev + 6, products.length))}
+                                    className="px-5 py-2.5 bg-gradient-to-r from-violet-600 to-indigo-650 hover:from-violet-700 hover:to-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-md hover:shadow-lg transition-all duration-200 cursor-pointer active:scale-95"
+                                >
+                                    Show Next Options
+                                </button>
+                            </div>
+                        )}
+
+                        {products.length <= visibleCount && (
+                            <div className="col-span-full flex flex-col items-center justify-center w-full mt-4 py-4 border-t border-slate-100">
+                                <p className="text-xs text-slate-400 font-bold italic tracking-wide">
+                                    ✨ {endOfListMessage} ✨
+                                </p>
+                            </div>
+                        )}
                     </div>
                 </div>
             )}

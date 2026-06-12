@@ -21,6 +21,8 @@ export async function GET(
 
             let traceReport: any = null;
             let intelligenceTrace: any = null;
+            let isAllRequested: boolean | undefined = undefined;
+            let initialVisibleCount: number | undefined = undefined;
 
             if (m.metadata) {
                 if (m.metadata.products_list) {
@@ -35,6 +37,12 @@ export async function GET(
                 if (m.metadata.intelligenceTrace) {
                     intelligenceTrace = m.metadata.intelligenceTrace;
                 }
+                if (m.metadata.isAllRequested !== undefined && m.metadata.isAllRequested !== null) {
+                    isAllRequested = m.metadata.isAllRequested as boolean;
+                }
+                if (m.metadata.initialVisibleCount !== undefined && m.metadata.initialVisibleCount !== null) {
+                    initialVisibleCount = m.metadata.initialVisibleCount as number;
+                }
             }
 
             return {
@@ -44,7 +52,9 @@ export async function GET(
                 products: products.length > 0 ? products : undefined,
                 tracking: tracking || undefined,
                 traceReport: traceReport || undefined,
-                intelligenceTrace: intelligenceTrace || undefined
+                intelligenceTrace: intelligenceTrace || undefined,
+                isAllRequested,
+                initialVisibleCount
             };
         });
 

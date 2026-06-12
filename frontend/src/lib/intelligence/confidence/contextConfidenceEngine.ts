@@ -52,7 +52,7 @@ export class ContextConfidenceEngine {
       mvcMet = true;
     } else if (extraction.intent === "REORDER") {
       mvcMet = true;
-    } else if (extraction.intent === "SMALL_TALK" || extraction.intent === "UNKNOWN" || extraction.intent === "COMPLAINT") {
+    } else if (extraction.intent === "SMALL_TALK" || extraction.intent === "UNKNOWN" || extraction.intent === "COMPLAINT" || extraction.intent === "EXPLORATION") {
       mvcMet = true; // Don't block non-shopping flows
     }
 
@@ -68,6 +68,12 @@ export class ContextConfidenceEngine {
         ready = true;
         reason = "needs_refinement";
       }
+    }
+
+    // Explicit override for EXPLORATION intent to ensure it triggers lead questions without blocking
+    if (extraction.intent === "EXPLORATION") {
+      ready = true;
+      reason = "needs_refinement";
     }
 
     const result: ConfidenceResult = {

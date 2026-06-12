@@ -137,3 +137,176 @@ export async function getCommunityScores(productIds: string[], contextKey: strin
         return {};
     }
 }
+
+export async function getV15CommunityScores(
+    productIds: string[],
+    contextKey: string,
+    recipient: string,
+    occasion: string
+): Promise<Record<string, { likeRate: number; purchaseRate: number; bundleRate: number; score: number }>> {
+    const result: Record<string, { likeRate: number; purchaseRate: number; bundleRate: number; score: number }> = {};
+    
+    // Set defaults
+    productIds.forEach(id => {
+        result[id] = { likeRate: 0.5, purchaseRate: 0.0, bundleRate: 0.0, score: 0.5 };
+    });
+
+    if (!useCloud || !supabase || productIds.length === 0) return result;
+
+    try {
+        // 1. Fetch votes from community_relevance_scores
+        const { data: voteData } = await supabase
+            .from("community_relevance_scores")
+            .select("product_id, positive_votes, negative_votes")
+            .eq("context_key", contextKey)
+            .in("product_id", productIds);
+
+        const votesMap: Record<string, { pos: number; neg: number }> = {};
+        if (voteData) {
+            voteData.forEach(row => {
+                votesMap[row.product_id] = { pos: row.positive_votes, neg: row.negative_votes };
+            });
+        }
+
+        // 2. Fetch action counts from community_analytics
+        const { data: actionData } = await supabase
+            .from("community_analytics")
+            .select("product_id, action")
+            .eq("relationship_type", recipient.toLowerCase())
+            .eq("occasion_type", occasion.toLowerCase())
+            .in("product_id", productIds);
+
+        const countsMap: Record<string, { view: number; expand: number; like: number; dislike: number; bundle_add: number; purchase: number; total: number }> = {};
+        productIds.forEach(id => {
+            countsMap[id] = { view: 0, expand: 0, like: 0, dislike: 0, bundle_add: 0, purchase: 0, total: 0 };
+        });
+
+        if (actionData) {
+            actionData.forEach(row => {
+                const pid = row.product_id;
+                const act = row.action;
+                if (countsMap[pid]) {
+                    if (act === "view") countsMap[pid].view++;
+                    else if (act === "expand") countsMap[pid].expand++;
+                    else if (act === "like") countsMap[pid].like++;
+                    else if (act === "dislike") countsMap[pid].dislike++;
+                    else if (act === "bundle_add") countsMap[pid].bundle_add++;
+                    else if (act === "purchase") countsMap[pid].purchase++;
+                    countsMap[pid].total++;
+                }
+            });
+        }
+
+        // 3. Compute final COMMUNITY_SCORE
+        productIds.forEach(id => {
+            const votes = votesMap[id] || { pos: 0, neg: 0 };
+            const actions = countsMap[id];
+
+            // Like Rate
+            let likeRate = 0.5; // neutral default
+            const totalVotes = votes.pos + votes.neg + actions.like + actions.dislike;
+            const posVotes = votes.pos + actions.like;
+            if (totalVotes > 0) {
+                likeRate = posVotes / totalVotes;
+            }
+
+            // Purchase Rate
+            let purchaseRate = 0.0;
+            if (actions.total > 0) {
+                purchaseRate = actions.purchase / actions.total;
+            }
+
+            // Bundle Rate
+            let bundleRate = 0.0;
+            if (actions.total > 0) {
+                bundleRate = actions.bundle_add / actions.total;
+            }
+
+            const score = (likeRate * 0.4) + (purchaseRate * 0.4) + (bundleRate * 0.2);
+            result[id] = { likeRate, purchaseRate, bundleRate, score };
+        });
+
+    } catch (err) {
+        console.error("Error fetching V1.5 community scores:", err);
+    }
+
+    return result;
+}
+
+export async function getTrendScores(productIds: string[]): Promise<Record<string, number>> {
+    const result: Record<string, number> = {};
+    productIds.forEach(id => { result[id] = 0.5; }); // Default to 0.5 (neutral)
+    
+    if (!useCloud || !supabase || productIds.length === 0) return result;
+
+    try {
+        const oneWeekAgo = new Date();
+        oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+
+        const { data } = await supabase
+            .from("community_analytics")
+            .select("product_id")
+            .gte("created_at", oneWeekAgo.toISOString())
+            .in("product_id", productIds);
+
+        const counts: Record<string, number> = {};
+        let maxCount = 0;
+        if (data) {
+            data.forEach(row => {
+                counts[row.product_id] = (counts[row.product_id] || 0) + 1;
+                if (counts[row.product_id] > maxCount) {
+                    maxCount = counts[row.product_id];
+                }
+            });
+        }
+
+        productIds.forEach(id => {
+            if (maxCount > 0) {
+                const count = counts[id] || 0;
+                result[id] = 0.5 + 0.5 * (count / maxCount);
+            } else {
+                result[id] = 0.5;
+            }
+        });
+    } catch (err) {
+        console.error("Error calculating trend scores:", err);
+    }
+    return result;
+}
+
+export async function logCommunityAction(
+    userId: string | null,
+    productId: string,
+    action: 'view' | 'expand' | 'like' | 'dislike' | 'bundle_add' | 'purchase',
+    relationshipType?: string | null,
+    occasionType?: string | null,
+    budgetRange?: string | null
+): Promise<void> {
+    if (!useCloud || !supabase) {
+        console.log(`[Local Analytics Fallback] Action: ${action}, Product: ${productId}, Context: ${relationshipType || 'none'}/${occasionType || 'none'}/${budgetRange || 'none'}`);
+        return;
+    }
+    
+    // Normalize guest user IDs
+    const cleanUserId = !userId || userId === "00000000-0000-0000-0000-000000000000" || userId.startsWith("guest")
+        ? null
+        : userId;
+
+    try {
+        const { error } = await supabase.from("community_analytics").insert({
+            user_id: cleanUserId,
+            product_id: productId,
+            action,
+            relationship_type: relationshipType?.toLowerCase() || null,
+            occasion_type: occasionType?.toLowerCase() || null,
+            budget_range: budgetRange || null
+        });
+
+        if (error) {
+            console.error("Error inserting community action:", error.message);
+        }
+    } catch (err) {
+        console.error("Error logging community action:", err);
+    }
+}
+

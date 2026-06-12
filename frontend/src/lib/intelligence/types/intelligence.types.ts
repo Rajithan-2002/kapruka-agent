@@ -9,6 +9,7 @@ export type IntentType =
   | "SMALL_TALK"
   | "PREFERENCE_CORRECTION"
   | "PRICE_REFINEMENT"
+  | "EXPLORATION"
   | "UNKNOWN";
 
 export type TriggerType =

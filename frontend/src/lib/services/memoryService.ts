@@ -253,3 +253,60 @@ export async function incrementMemoryImportance(userId: string, memId: string): 
         console.error(e);
     }
 }
+
+export async function deleteRelationship(userId: string, relationshipId: string): Promise<void> {
+    if (!useCloud || !supabase) return;
+    try {
+        // Cascade delete associated preferences first
+        await supabase.from("preferences").delete().eq("relationship_id", relationshipId).eq("user_id", userId);
+        // Delete relationship
+        const { error } = await supabase.from("relationships").delete().eq("id", relationshipId).eq("user_id", userId);
+        if (error) throw error;
+    } catch (e) {
+        console.error("Error deleting relationship:", e);
+        throw e;
+    }
+}
+
+export async function updateRelationship(userId: string, relationshipId: string, updates: Partial<Omit<Relationship, "id">>): Promise<Relationship> {
+    if (!useCloud || !supabase) throw new Error("No database connected");
+    try {
+        const updatePayload: Record<string, any> = {};
+        if (updates.relationship_type !== undefined) updatePayload.relationship_type = updates.relationship_type;
+        if (updates.nickname !== undefined) updatePayload.nickname = updates.nickname;
+        if (updates.birthday !== undefined) updatePayload.birthday = updates.birthday;
+        if (updates.notes !== undefined) updatePayload.notes = updates.notes;
+
+        const { data, error } = await supabase
+            .from("relationships")
+            .update(updatePayload)
+            .eq("id", relationshipId)
+            .eq("user_id", userId)
+            .select()
+            .single();
+
+        if (error) throw error;
+        return {
+            id: data.id,
+            relationship_type: data.relationship_type,
+            nickname: data.nickname,
+            birthday: data.birthday || undefined,
+            notes: data.notes || undefined
+        };
+    } catch (e) {
+        console.error("Error updating relationship:", e);
+        throw e;
+    }
+}
+
+export async function deletePreference(userId: string, preferenceId: string): Promise<void> {
+    if (!useCloud || !supabase) return;
+    try {
+        const { error } = await supabase.from("preferences").delete().eq("id", preferenceId).eq("user_id", userId);
+        if (error) throw error;
+    } catch (e) {
+        console.error("Error deleting preference:", e);
+        throw e;
+    }
+}
+

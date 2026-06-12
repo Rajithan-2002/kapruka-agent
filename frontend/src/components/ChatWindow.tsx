@@ -67,6 +67,25 @@ interface LocalPreference {
   interest: string;
 }
 
+interface LandingBundle {
+  id: string;
+  name: string;
+  price: number;
+  image: string;
+  url: string;
+  tag: string;
+  delivery: string;
+}
+
+interface LandingFastItem {
+  id: string;
+  name: string;
+  price: number;
+  image: string;
+  url: string;
+  delay: string;
+}
+
 export default function ChatWindow() {
   const [activeTab, setActiveTab] = useState<"home" | "build-gift" | "chat" | "memory" | "profile">("home");
   const [showSplash, setShowSplash] = useState(true);
@@ -117,6 +136,100 @@ export default function ChatWindow() {
   const [newPersonBirthday, setNewPersonBirthday] = useState("");
   const [newPersonInterests, setNewPersonInterests] = useState("");
 
+  // Landing products state
+  const [landingBundles, setLandingBundles] = useState<LandingBundle[]>([]);
+  const [landingFastDelivery, setLandingFastDelivery] = useState<LandingFastItem[]>([]);
+  const [isLoadingLandingProducts, setIsLoadingLandingProducts] = useState(false);
+
+  const [editingRelationshipId, setEditingRelationshipId] = useState<string | null>(null);
+  const [editNickname, setEditNickname] = useState("");
+  const [editRelationshipType, setEditRelationshipType] = useState("");
+  const [editBirthday, setEditBirthday] = useState("");
+  const [editNotes, setEditNotes] = useState("");
+  const [newInterestText, setNewInterestText] = useState<Record<string, string>>({});
+
+  const handleDeleteRelationship = async (relId: string) => {
+    if (!confirm("Are you sure you want to remove this person?")) return;
+    try {
+      const res = await fetch(`/api/relationships?relationshipId=${relId}`, {
+        method: "DELETE"
+      });
+      if (res.ok) {
+        await loadUserRelationships();
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const startEditingRelationship = (rel: LocalRelationship) => {
+    setEditingRelationshipId(rel.id);
+    setEditNickname(rel.nickname);
+    setEditRelationshipType(rel.relationship_type);
+    setEditBirthday(rel.birthday || "");
+    setEditNotes(rel.notes || "");
+  };
+
+  const handleSaveRelationship = async (relId: string) => {
+    try {
+      const res = await fetch(`/api/relationships`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          relationshipId: relId,
+          updates: {
+            nickname: editNickname,
+            relationship_type: editRelationshipType,
+            birthday: editBirthday,
+            notes: editNotes
+          }
+        })
+      });
+      if (res.ok) {
+        setEditingRelationshipId(null);
+        await loadUserRelationships();
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleDeletePreference = async (prefId: string) => {
+    try {
+      const res = await fetch(`/api/relationships?preferenceId=${prefId}`, {
+        method: "DELETE"
+      });
+      if (res.ok) {
+        await loadUserRelationships();
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleAddPreference = async (relId: string) => {
+    const interest = newInterestText[relId]?.trim();
+    if (!interest) return;
+
+    try {
+      const res = await fetch(`/api/relationships`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "add_preference",
+          relationshipId: relId,
+          interest
+        })
+      });
+      if (res.ok) {
+        setNewInterestText(prev => ({ ...prev, [relId]: "" }));
+        await loadUserRelationships();
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   // AI Bundle Builder state variables
   const [builderRecipient, setBuilderRecipient] = useState("girlfriend");
   const [builderOccasion, setBuilderOccasion] = useState("Birthday");
@@ -132,6 +245,95 @@ export default function ChatWindow() {
   // Product detailed card viewer state
   const [selectedDetailsProduct, setSelectedDetailsProduct] = useState<Product | null>(null);
 
+  const [sameDayTimeLeft, setSameDayTimeLeft] = useState("");
+
+  useEffect(() => {
+    const calculateTimeLeft = () => {
+      const now = new Date();
+      const cutoff = new Date();
+      cutoff.setHours(17, 30, 0, 0);
+
+      if (now.getTime() > cutoff.getTime()) {
+        return "Same-day delivery cutoff passed. Order now for tomorrow delivery.";
+      }
+
+      const diff = cutoff.getTime() - now.getTime();
+      const hours = Math.floor(diff / (1000 * 60 * 60));
+      const minutes = Math.floor((diff / (1000 * 60)) % 60);
+      return `Order within ${hours}h ${minutes}m for same-day delivery.`;
+    };
+
+    setSameDayTimeLeft(calculateTimeLeft());
+    const timer = setInterval(() => {
+      setSameDayTimeLeft(calculateTimeLeft());
+    }, 60000);
+
+    return () => clearInterval(timer);
+  }, []);
+
+  function getDaysUntilBirthday(birthdayStr?: string): number | null {
+    if (!birthdayStr) return null;
+    const cleanStr = birthdayStr.trim();
+    let day = 0;
+    let month = -1;
+
+    const isoMatch = cleanStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (isoMatch) {
+      month = parseInt(isoMatch[2]) - 1;
+      day = parseInt(isoMatch[3]);
+    } else {
+      const parts = cleanStr.split(/\s+/);
+      if (parts.length === 2) {
+        const months = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+        const shortMonths = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+        const p0 = parts[0].toLowerCase();
+        const p1 = parts[1].toLowerCase();
+        let mIdx = months.indexOf(p0);
+        if (mIdx === -1) mIdx = shortMonths.indexOf(p0);
+        if (mIdx !== -1) {
+          month = mIdx;
+          day = parseInt(p1);
+        } else {
+          mIdx = months.indexOf(p1);
+          if (mIdx === -1) mIdx = shortMonths.indexOf(p1);
+          if (mIdx !== -1) {
+            month = mIdx;
+            day = parseInt(p0);
+          }
+        }
+      }
+    }
+
+    if (day === 0 || isNaN(day) || month === -1) return null;
+
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const targetDate = new Date(currentYear, month, day);
+
+    if (targetDate.getTime() < now.getTime() - 24 * 60 * 60 * 1000) {
+      targetDate.setFullYear(currentYear + 1);
+    }
+
+    const diffTime = targetDate.getTime() - now.getTime();
+    return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  }
+
+  const getForgottenEvents = () => {
+    return relationships
+      .map(r => {
+        const days = getDaysUntilBirthday(r.birthday);
+        return { ...r, daysRemaining: days };
+      })
+      .filter(r => r.daysRemaining !== null && r.daysRemaining <= 10)
+      .filter(r => {
+        const mentionsName = messages.some(m => 
+          (m.content && m.content.toLowerCase().includes(r.nickname.toLowerCase())) || 
+          (m.content && m.content.toLowerCase().includes(r.relationship_type.toLowerCase()))
+        );
+        return !mentionsName && bundle.length === 0;
+      });
+  };
+
   // Splash Screen Fade out
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -144,12 +346,32 @@ export default function ChatWindow() {
     return () => clearTimeout(timer);
   }, []);
 
-  // Fetch relationships on auth changes
+  // Fetch relationships and landing products on auth changes
   useEffect(() => {
     if (user) {
       loadUserRelationships();
+    } else {
+      loadLandingProducts();
     }
   }, [user]);
+
+  const loadLandingProducts = async () => {
+    setIsLoadingLandingProducts(true);
+    try {
+      const res = await fetch("/api/landing-products");
+      const data = await res.json();
+      if (data.popularBundles && data.popularBundles.length > 0) {
+        setLandingBundles(data.popularBundles);
+      }
+      if (data.fastDelivery && data.fastDelivery.length > 0) {
+        setLandingFastDelivery(data.fastDelivery);
+      }
+    } catch (e) {
+      console.error("Failed to load landing products:", e);
+    } finally {
+      setIsLoadingLandingProducts(false);
+    }
+  };
 
   const loadUserRelationships = async () => {
     setIsLoadingRelationships(true);
@@ -158,6 +380,8 @@ export default function ChatWindow() {
       const data = await res.json();
       if (data.relationships) setRelationships(data.relationships);
       if (data.preferences) setPreferences(data.preferences);
+      // Reload personalized landing products immediately
+      loadLandingProducts();
     } catch (e) {
       console.error("Failed to load relationships:", e);
     } finally {
@@ -248,30 +472,25 @@ export default function ChatWindow() {
     fetchConversations();
   }, [user, messages]);
 
-  // Initialize or load latest session
+  // Initialize session (always start a brand new chat on app load)
   useEffect(() => {
     if (!user || hasCheckedSession) return;
     const initSession = async () => {
       try {
         const res = await fetch("/api/conversations");
         const data = await res.json();
-        if (data.conversations && data.conversations.length > 0) {
-          const savedActiveId = localStorage.getItem("kappy_active_conv_id");
-          const stillExists = data.conversations.some((c: any) => c.id === savedActiveId);
-          if (savedActiveId && stillExists) {
-            setActiveConversationId(savedActiveId);
-          } else {
-            setActiveConversationId(data.conversations[0].id);
-          }
-        } else {
-          const newId = `session-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-          await fetch("/api/conversations", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ id: newId, title: "New Chat" })
-          });
-          setActiveConversationId(newId);
+        if (data.conversations) {
+          setConversations(data.conversations);
         }
+
+        // Always start with a new, fresh conversation session on page load
+        const newId = `session-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+        await fetch("/api/conversations", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: newId, title: "New Chat" })
+        });
+        setActiveConversationId(newId);
         setHasCheckedSession(true);
       } catch (err) {
         console.error(err);
@@ -353,6 +572,31 @@ export default function ChatWindow() {
         }),
       });
 
+      const contentType = response.headers.get("content-type") || "";
+      if (contentType.includes("application/json")) {
+        const data = await response.json();
+        setIsTyping(false);
+        const aiMsgId = `kappy-${Date.now()}`;
+        setMessages(prev => [...prev, {
+          id: aiMsgId,
+          role: "assistant",
+          content: data.content || "",
+          products: data.products || null,
+          tracking: data.tracking || null,
+          traceReport: data.traceReport || null,
+          intelligenceTrace: data.intelligenceTrace || null,
+          judgeModeTrace: data.judgeModeTrace || null,
+          transparencyMessage: data.transparencyMessage || null,
+          followUpSuggestions: data.followUpSuggestions || null,
+          isAllRequested: data.isAllRequested,
+          initialVisibleCount: data.initialVisibleCount
+        }]);
+        if (data.activeMemories && Array.isArray(data.activeMemories)) {
+          setActiveMemories(data.activeMemories);
+        }
+        return;
+      }
+
       if (!response.body) throw new Error("No response body");
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -396,7 +640,9 @@ export default function ChatWindow() {
                   intelligenceTrace: customData.intelligenceTrace || m.intelligenceTrace,
                   judgeModeTrace: customData.judgeModeTrace || m.judgeModeTrace,
                   transparencyMessage: customData.transparencyMessage || m.transparencyMessage,
-                  followUpSuggestions: customData.followUpSuggestions || m.followUpSuggestions
+                  followUpSuggestions: customData.followUpSuggestions || m.followUpSuggestions,
+                  isAllRequested: customData.isAllRequested !== undefined ? customData.isAllRequested : m.isAllRequested,
+                  initialVisibleCount: customData.initialVisibleCount || m.initialVisibleCount
                 } : m));
               }
             } catch (e) {}
@@ -413,7 +659,9 @@ export default function ChatWindow() {
           intelligenceTrace: customData.intelligenceTrace || null,
           judgeModeTrace: customData.judgeModeTrace || null,
           transparencyMessage: customData.transparencyMessage || null,
-          followUpSuggestions: customData.followUpSuggestions || null
+          followUpSuggestions: customData.followUpSuggestions || null,
+          isAllRequested: customData.isAllRequested,
+          initialVisibleCount: customData.initialVisibleCount
         } : m));
         
         if (customData.activeMemories && Array.isArray(customData.activeMemories)) {
@@ -815,6 +1063,74 @@ export default function ChatWindow() {
                 )}
               </div>
 
+              {/* Same-Day Countdown */}
+              {sameDayTimeLeft && (
+                <div className="p-3.5 bg-gradient-to-r from-emerald-50 to-teal-50/30 border border-emerald-100/80 rounded-2xl flex items-center justify-between shadow-sm">
+                  <div className="flex items-center gap-2">
+                    <span className="flex h-2 w-2 relative">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                    </span>
+                    <span className="text-xs text-emerald-800 font-bold">{sameDayTimeLeft}</span>
+                  </div>
+                  <span className="text-[10px] bg-emerald-500 text-white font-extrabold px-1.5 py-0.5 rounded uppercase">Fast 🚚</span>
+                </div>
+              )}
+
+              {/* Upcoming Events Countdown Pills */}
+              {relationships.some(r => getDaysUntilBirthday(r.birthday) !== null) && (
+                <div className="space-y-2">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Upcoming events</span>
+                  <div className="flex flex-wrap gap-2">
+                    {relationships
+                      .map(r => ({ ...r, daysRemaining: getDaysUntilBirthday(r.birthday) }))
+                      .filter(r => r.daysRemaining !== null)
+                      .sort((a, b) => (a.daysRemaining || 0) - (b.daysRemaining || 0))
+                      .slice(0, 3)
+                      .map(r => (
+                        <span
+                          key={r.id}
+                          onClick={() => {
+                            setActiveTab("chat");
+                            handleSendMessage(`Find gift options for ${r.nickname}'s upcoming event`);
+                          }}
+                          className="px-3 py-1.5 bg-violet-50 hover:bg-violet-100 text-violet-700 border border-violet-100 rounded-full text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all active:scale-95 shadow-sm"
+                        >
+                          📅 {r.nickname}'s {r.relationship_type === "girlfriend" ? "Birthday" : "Event"} - {r.daysRemaining} Days
+                        </span>
+                      ))
+                    }
+                  </div>
+                </div>
+              )}
+
+              {/* Forgotten Event Detector */}
+              {getForgottenEvents().map(event => (
+                <div key={event.id} className="p-4 bg-rose-50 border border-rose-100 rounded-3xl flex flex-col gap-3 shadow-sm animate-slide-down">
+                  <div className="flex gap-2.5 items-start">
+                    <div className="p-2 bg-rose-100 text-rose-600 rounded-xl">
+                      <AlertCircle className="w-5 h-5 text-rose-500" />
+                    </div>
+                    <div className="min-w-0">
+                      <h4 className="font-extrabold text-rose-800 text-sm">Forgotten Event Warning</h4>
+                      <p className="text-xs text-rose-600/90 font-medium mt-0.5 leading-relaxed">
+                        {event.nickname}'s event is just {event.daysRemaining} days away! You haven't started a bundle or active chat for them. Let Kappy optimize a custom surprise.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setBuilderRecipient(event.relationship_type);
+                      setBuilderOccasion("Birthday");
+                      setActiveTab("build-gift");
+                    }}
+                    className="w-full py-2 bg-rose-500 hover:bg-rose-600 active:scale-95 text-white font-extrabold text-xs rounded-xl transition-all shadow-sm flex items-center justify-center gap-1 cursor-pointer"
+                  >
+                    <Gift className="w-3.5 h-3.5" /> Start Hamper Package
+                  </button>
+                </div>
+              ))}
+
               {/* Occasion Quick Shortcuts */}
               <div className="space-y-2.5">
                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Occasions</span>
@@ -865,12 +1181,23 @@ export default function ChatWindow() {
                   <button onClick={() => setActiveTab("build-gift")} className="text-[10px] text-violet-600 font-bold hover:underline">Customize ✨</button>
                 </div>
                 <div className="space-y-3">
-                  {[
-                    { name: "Romantic Surprise Hamper", price: 4850, image: "https://images.unsplash.com/photo-1549007994-cb92ca88806f?w=400&q=80", tag: "Roses + Chocolate + Card", delivery: "🚚 Same Day Delivery" },
-                    { name: "Celebration Birthday Basket", price: 7200, image: "https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?w=400&q=80", tag: "Cake + Balloons + Toys", delivery: "🚚 Arrives Today" }
-                  ].map((hamp, idx) => (
-                    <div key={idx} className="flex gap-3 bg-white border border-slate-100 rounded-2xl p-3 shadow-sm hover:shadow-md transition-all">
-                      <img src={hamp.image} alt={hamp.name} className="w-16 h-16 object-cover rounded-xl border border-slate-100" />
+                  {(landingBundles.length > 0 ? landingBundles : [
+                    { id: "mock-hamp-1", name: "Romantic Surprise Hamper", price: 4850, image: "https://images.unsplash.com/photo-1549007994-cb92ca88806f?w=400&q=80", tag: "Roses + Chocolate + Card", delivery: "🚚 Same Day Delivery", url: "https://www.kapruka.com/buyonline/romantic-surprise-hamper" },
+                    { id: "mock-hamp-2", name: "Celebration Birthday Basket", price: 7200, image: "https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?w=400&q=80", tag: "Cake + Balloons + Toys", delivery: "🚚 Arrives Today", url: "https://www.kapruka.com/buyonline/celebration-birthday-basket" }
+                  ]).map((hamp, idx) => (
+                    <div 
+                      key={hamp.id || idx} 
+                      onClick={() => addToBundle({
+                        id: hamp.id || `landing-hamp-${idx}`,
+                        name: hamp.name,
+                        price: hamp.price,
+                        image_url: hamp.image,
+                        url: hamp.url || ""
+                      })}
+                      className="flex gap-3 bg-white border border-slate-100 rounded-2xl p-3 shadow-sm hover:shadow-md transition-all cursor-pointer hover:border-violet-300 hover:bg-violet-50/10 active:scale-[0.98]"
+                      title="Click to add to your hamper package"
+                    >
+                      <img src={hamp.image} alt={hamp.name} className="w-16 h-16 object-cover rounded-xl border border-slate-100 bg-slate-50" />
                       <div className="flex-1 min-w-0 flex flex-col justify-between">
                         <div>
                           <h4 className="font-bold text-slate-800 text-xs md:text-sm truncate">{hamp.name}</h4>
@@ -878,7 +1205,7 @@ export default function ChatWindow() {
                         </div>
                         <div className="flex items-center justify-between mt-1.5">
                           <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded">{hamp.delivery}</span>
-                          <span className="text-xs font-black text-rose-600">LKR {hamp.price}</span>
+                          <span className="text-xs font-black text-rose-600">LKR {hamp.price.toLocaleString()}</span>
                         </div>
                       </div>
                     </div>
@@ -890,11 +1217,22 @@ export default function ChatWindow() {
               <div className="space-y-3">
                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Today's Fast Delivery</span>
                 <div className="grid grid-cols-2 gap-3">
-                  {[
-                    { name: "Delicious Chocolate Gateau Cake", price: 3200, image: "https://images.unsplash.com/photo-1578985545062-69928b1d9587?w=300&q=80", delay: "2 Hours" },
-                    { name: "Fresh Red Roses Bunch", price: 2200, image: "https://images.unsplash.com/photo-1561181286-d3fee7d55364?w=300&q=80", delay: "3 Hours" }
-                  ].map((prod, idx) => (
-                    <div key={idx} className="bg-white border border-slate-100 rounded-2xl p-2.5 shadow-sm">
+                  {(landingFastDelivery.length > 0 ? landingFastDelivery : [
+                    { id: "mock-fast-1", name: "Delicious Chocolate Gateau Cake", price: 3200, image: "https://images.unsplash.com/photo-1578985545062-69928b1d9587?w=300&q=80", delay: "2 Hours", url: "https://www.kapruka.com/buyonline/delicious-chocolate-gateau-cake" },
+                    { id: "mock-fast-2", name: "Fresh Red Roses Bunch", price: 2200, image: "https://images.unsplash.com/photo-1561181286-d3fee7d55364?w=300&q=80", delay: "3 Hours", url: "https://www.kapruka.com/buyonline/fresh-red-roses-bunch" }
+                  ]).map((prod, idx) => (
+                    <div 
+                      key={prod.id || idx} 
+                      onClick={() => addToBundle({
+                        id: prod.id || `landing-fast-${idx}`,
+                        name: prod.name,
+                        price: prod.price,
+                        image_url: prod.image,
+                        url: prod.url || ""
+                      })}
+                      className="bg-white border border-slate-100 rounded-2xl p-2.5 shadow-sm cursor-pointer hover:border-violet-300 hover:shadow-md transition-all hover:bg-violet-50/10 active:scale-[0.98]"
+                      title="Click to add to your hamper package"
+                    >
                       <div className="relative h-28 w-full rounded-xl overflow-hidden bg-slate-50">
                         <img src={prod.image} alt={prod.name} className="w-full h-full object-cover" />
                         <span className="absolute bottom-1.5 left-1.5 bg-emerald-500 text-white font-extrabold text-[9px] px-1.5 py-0.5 rounded shadow-sm">
@@ -902,7 +1240,7 @@ export default function ChatWindow() {
                         </span>
                       </div>
                       <h5 className="font-bold text-slate-800 text-xs mt-2 truncate">{prod.name}</h5>
-                      <p className="text-xs font-extrabold text-slate-500 mt-0.5">LKR {prod.price}</p>
+                      <p className="text-xs font-extrabold text-slate-500 mt-0.5">LKR {prod.price.toLocaleString()}</p>
                     </div>
                   ))}
                 </div>
@@ -1190,43 +1528,152 @@ export default function ChatWindow() {
                 <div className="space-y-4">
                   {relationships.map(rel => {
                     const relPrefs = preferences.filter(p => p.relationship_id === rel.id);
+                    const isEditing = editingRelationshipId === rel.id;
                     return (
-                      <div key={rel.id} className="bg-white border border-slate-100 rounded-2xl p-4 shadow-sm space-y-3">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xl">
-                              {rel.relationship_type === "girlfriend" ? "❤️" : rel.relationship_type === "father" ? "👨" : "👤"}
-                            </span>
+                      <div key={rel.id} className="bg-white border border-slate-100 rounded-2xl p-4 shadow-sm space-y-3 relative group">
+                        {isEditing ? (
+                          <div className="space-y-3">
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <label className="text-[10px] font-bold text-slate-400 uppercase block mb-0.5">Nickname</label>
+                                <input
+                                  type="text"
+                                  className="w-full text-xs font-semibold p-1.5 border border-slate-200 rounded-lg focus:outline-none focus:border-violet-500"
+                                  value={editNickname}
+                                  onChange={e => setEditNickname(e.target.value)}
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[10px] font-bold text-slate-400 uppercase block mb-0.5">Relationship</label>
+                                <select
+                                  className="w-full text-xs font-semibold p-1.5 border border-slate-200 rounded-lg focus:outline-none focus:border-violet-500"
+                                  value={editRelationshipType}
+                                  onChange={e => setEditRelationshipType(e.target.value)}
+                                >
+                                  <option value="girlfriend">Girlfriend</option>
+                                  <option value="boyfriend">Boyfriend</option>
+                                  <option value="mother">Mother</option>
+                                  <option value="father">Father</option>
+                                  <option value="friend">Friend</option>
+                                  <option value="other">Other</option>
+                                </select>
+                              </div>
+                            </div>
                             <div>
-                              <h4 className="font-extrabold text-slate-800 text-sm">{rel.nickname}</h4>
-                              <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider">{rel.relationship_type}</span>
+                              <label className="text-[10px] font-bold text-slate-400 uppercase block mb-0.5">Birthday</label>
+                              <input
+                                type="text"
+                                placeholder="e.g. 12 October or YYYY-MM-DD"
+                                className="w-full text-xs font-semibold p-1.5 border border-slate-200 rounded-lg focus:outline-none focus:border-violet-500"
+                                value={editBirthday}
+                                onChange={e => setEditBirthday(e.target.value)}
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[10px] font-bold text-slate-400 uppercase block mb-0.5">Insights / Notes</label>
+                              <textarea
+                                className="w-full text-xs font-semibold p-1.5 border border-slate-200 rounded-lg focus:outline-none focus:border-violet-500"
+                                rows={2}
+                                value={editNotes}
+                                onChange={e => setEditNotes(e.target.value)}
+                              />
+                            </div>
+                            <div className="flex gap-2 justify-end">
+                              <button
+                                onClick={() => setEditingRelationshipId(null)}
+                                className="px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-600 text-[11px] font-bold rounded-lg transition-all"
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                onClick={() => handleSaveRelationship(rel.id)}
+                                className="px-3 py-1 bg-violet-600 hover:bg-violet-750 text-white text-[11px] font-bold rounded-lg transition-all"
+                              >
+                                Save Changes
+                              </button>
                             </div>
                           </div>
-                          {rel.birthday && (
-                            <span className="text-[10px] font-bold text-violet-600 bg-violet-50 px-2 py-0.5 rounded-lg flex items-center gap-1">
-                              <Calendar className="w-3 h-3" /> {rel.birthday}
-                            </span>
-                          )}
-                        </div>
-
-                        {/* Interests / Preferences list */}
-                        {relPrefs.length > 0 && (
-                          <div className="space-y-1">
-                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Preferences Vault</span>
-                            <div className="flex flex-wrap gap-1.5">
-                              {relPrefs.map(pref => (
-                                <span key={pref.id} className="px-2 py-0.5 text-[10px] font-bold bg-slate-100 text-slate-600 rounded">
-                                  {pref.interest}
+                        ) : (
+                          <>
+                            {/* Header details with action buttons */}
+                            <div className="flex items-start justify-between">
+                              <div className="flex items-center gap-2">
+                                <span className="text-xl">
+                                  {rel.relationship_type === "girlfriend" ? "❤️" : rel.relationship_type === "father" ? "👨" : "👤"}
                                 </span>
-                              ))}
+                                <div>
+                                  <h4 className="font-extrabold text-slate-800 text-sm">{rel.nickname}</h4>
+                                  <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider">{rel.relationship_type}</span>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                {rel.birthday && (
+                                  <span className="text-[10px] font-bold text-violet-600 bg-violet-50 px-2 py-0.5 rounded-lg flex items-center gap-1">
+                                    <Calendar className="w-3 h-3" /> {rel.birthday}
+                                  </span>
+                                )}
+                                <div className="flex gap-1">
+                                  <button
+                                    onClick={() => startEditingRelationship(rel)}
+                                    className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-slate-600 transition-all cursor-pointer"
+                                    title="Edit Profile"
+                                  >
+                                    <Sparkles className="w-3 h-3" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeleteRelationship(rel.id)}
+                                    className="p-1 hover:bg-rose-50 rounded text-slate-400 hover:text-rose-600 transition-all cursor-pointer"
+                                    title="Delete Profile"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
                             </div>
-                          </div>
-                        )}
 
-                        {rel.notes && (
-                          <div className="pt-2 border-t border-slate-100 text-[11px] text-slate-500 font-medium">
-                            <span className="font-bold text-slate-700">Insights:</span> {rel.notes}
-                          </div>
+                            {/* Interests / Preferences list */}
+                            <div className="space-y-1.5">
+                              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Preferences Vault</span>
+                              <div className="flex flex-wrap gap-1.5 items-center">
+                                {relPrefs.map(pref => (
+                                  <span key={pref.id} className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold bg-slate-100 text-slate-600 rounded">
+                                    {pref.interest}
+                                    <button
+                                      onClick={() => handleDeletePreference(pref.id)}
+                                      className="hover:text-rose-500 font-black text-[9px] cursor-pointer"
+                                    >
+                                      ×
+                                    </button>
+                                  </span>
+                                ))}
+                                {/* Inline Add preference form */}
+                                <div className="flex items-center gap-1 bg-slate-50 border border-slate-200/50 rounded-lg pl-1.5 pr-0.5 py-0.5">
+                                  <input
+                                    type="text"
+                                    placeholder="+ Add Interest"
+                                    className="bg-transparent text-[10px] focus:outline-none w-16 text-slate-600 placeholder-slate-400 font-bold"
+                                    value={newInterestText[rel.id] || ""}
+                                    onChange={e => setNewInterestText(prev => ({ ...prev, [rel.id]: e.target.value }))}
+                                    onKeyDown={e => {
+                                      if (e.key === "Enter") handleAddPreference(rel.id);
+                                    }}
+                                  />
+                                  <button
+                                    onClick={() => handleAddPreference(rel.id)}
+                                    className="px-1 text-[11px] font-bold text-violet-600 hover:text-violet-800"
+                                  >
+                                    +
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+
+                            {rel.notes && (
+                              <div className="pt-2 border-t border-slate-100 text-[11px] text-slate-500 font-medium">
+                                <span className="font-bold text-slate-700">Insights:</span> {rel.notes}
+                              </div>
+                            )}
+                          </>
                         )}
                       </div>
                     );
