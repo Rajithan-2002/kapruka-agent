@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import { Star, Truck, ShoppingCart, ChevronDown, ChevronUp, Package, CheckCircle2, ThumbsUp, ThumbsDown, AlertCircle } from "lucide-react";
+import TrackingTimeline from "./TrackingTimeline";
 
 export interface Product {
     id: string;
@@ -56,9 +57,10 @@ interface ChatMessageProps {
     sessionId?: string | null;
     onAddToBundle?: (product: Product) => void;
     onFollowUpClick?: (text: string) => void;
+    onProductClick?: (productId: string) => void;
 }
 
-export default function ChatMessage({ message, isDebugMode = false, userId, sessionId, onAddToBundle, onFollowUpClick }: ChatMessageProps) {
+export default function ChatMessage({ message, isDebugMode = false, userId, sessionId, onAddToBundle, onFollowUpClick, onProductClick }: ChatMessageProps) {
     const { role, content, isLoading, loadingText, products, tracking, reassurances, transparencyMessage, followUpSuggestions } = message;
     const isAssistant = role === "assistant";
 
@@ -266,21 +268,31 @@ export default function ChatMessage({ message, isDebugMode = false, userId, sess
                                 <div
                                     key={`${product.id}-${index}`}
                                     className={`relative flex flex-col rounded-2xl bg-white border overflow-hidden transition-all duration-300 hover:shadow-lg shadow-sm w-full ${
-                                        product.isHighlighted
+                                        (product as any).isKappysPick
+                                            ? "border-rose-400 shadow-md ring-1 ring-rose-400/20"
+                                            : product.isHighlighted
                                             ? "border-amber-400 shadow-md ring-1 ring-amber-400/20"
                                             : "border-slate-100"
                                     }`}
                                 >
                                     {/* Recommended Glow Badge */}
-                                    {product.isHighlighted && (
+                                    {(product as any).isKappysPick ? (
+                                        <div className="absolute top-3 left-3 z-10 flex items-center gap-1 px-2.5 py-1 text-[10px] font-extrabold text-white bg-gradient-to-r from-rose-500 to-amber-500 rounded-full shadow-sm animate-pulse">
+                                            <Star className="w-3 h-3 fill-current text-white" />
+                                            <span>KAPPY'S PICK</span>
+                                        </div>
+                                    ) : product.isHighlighted ? (
                                         <div className="absolute top-3 left-3 z-10 flex items-center gap-1 px-2.5 py-1 text-[10px] font-extrabold text-slate-900 bg-gradient-to-r from-amber-300 to-yellow-400 rounded-full shadow-sm">
                                             <Star className="w-3 h-3 fill-current text-slate-900" />
                                             <span>TOP PICK</span>
                                         </div>
-                                    )}
+                                    ) : null}
 
                                     {/* Product Image */}
-                                    <div className="h-44 w-full bg-slate-50 overflow-hidden relative group">
+                                    <div 
+                                        className="h-44 w-full bg-slate-50 overflow-hidden relative group cursor-pointer"
+                                        onClick={() => onProductClick && onProductClick(product.id)}
+                                    >
                                         <img
                                             src={product.image_url}
                                             alt={product.name}
@@ -297,7 +309,10 @@ export default function ChatMessage({ message, isDebugMode = false, userId, sess
                                     {/* Product Info */}
                                     <div className="flex-1 p-4 flex flex-col justify-between">
                                         <div>
-                                            <h4 className="font-bold text-slate-800 text-sm md:text-base line-clamp-2 mb-1.5 leading-snug">
+                                            <h4 
+                                                className="font-bold text-slate-800 text-sm md:text-base line-clamp-2 mb-1.5 leading-snug cursor-pointer hover:text-indigo-600 transition-colors"
+                                                onClick={() => onProductClick && onProductClick(product.id)}
+                                            >
                                                 {product.name}
                                             </h4>
                                             
@@ -320,10 +335,10 @@ export default function ChatMessage({ message, isDebugMode = false, userId, sess
                                             {/* Why Kappy Chose This Section */}
                                             <div className="bg-amber-50/50 border border-amber-100/70 p-3 rounded-xl text-[11px] text-slate-700 mb-3 shadow-sm">
                                                 <span className="font-bold text-amber-800 flex items-center gap-1.5 mb-1.5">
-                                                    ✨ Why Kappy Chose This
+                                                    ✨ {(product as any).isKappysPick ? "Kappy's Pick Reason" : "Why Kappy Chose This"}
                                                 </span>
                                                 <ul className="space-y-1">
-                                                    {reasoningBullets.map((bullet, bIdx) => (
+                                                    {((product as any).explanations || reasoningBullets).map((bullet: string, bIdx: number) => (
                                                         <li key={bIdx} className="flex items-start gap-1 font-medium">
                                                             <span className="text-emerald-500 font-bold">✓</span>
                                                             <span className="leading-tight">{bullet}</span>
@@ -436,61 +451,7 @@ export default function ChatMessage({ message, isDebugMode = false, userId, sess
 
             {/* Tracking Card Timeline Widget */}
             {isAssistant && tracking && (
-                <div className="w-full max-w-md mt-4 p-5 bg-white border border-slate-100 rounded-2xl shadow-sm animate-fade-in text-slate-800">
-                    <div className="flex items-center justify-between mb-4 border-b border-slate-100 pb-3">
-                        <div>
-                            <span className="text-[10px] font-bold text-amber-500 uppercase tracking-wider">ACTIVE DELIVERY</span>
-                            <h4 className="font-extrabold text-slate-900 text-sm md:text-base">Order #{tracking.orderNumber}</h4>
-                        </div>
-                        <span className="px-2.5 py-1 text-xs font-black bg-emerald-50 text-emerald-600 rounded-full border border-emerald-100">
-                            {tracking.statusText}
-                        </span>
-                    </div>
-
-                    {/* Timeline progress indicator */}
-                    <div className="relative flex flex-col gap-5 pl-6 border-l-2 border-slate-100 ml-2 py-1">
-                        {tracking.steps.map((step, idx) => {
-                            const isDone = step.status === "done";
-                            const isActive = step.status === "active";
-                            return (
-                                <div key={idx} className="relative">
-                                    {/* Indicator Dot */}
-                                    <div
-                                        className={`absolute -left-[31px] top-0.5 flex items-center justify-center w-4.5 h-4.5 rounded-full border shadow-sm transition-all duration-300 ${
-                                            isDone
-                                                ? "bg-emerald-500 border-emerald-400 text-white"
-                                                : isActive
-                                                ? "bg-amber-400 border-amber-300 animate-pulse text-white"
-                                                : "bg-slate-50 border-slate-200"
-                                        }`}
-                                    >
-                                        {isDone && <CheckCircle2 className="w-3.5 h-3.5 text-white" />}
-                                        {isActive && <div className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />}
-                                    </div>
-
-                                    {/* Step details */}
-                                    <div>
-                                        <h5
-                                            className={`text-xs md:text-sm font-bold ${
-                                                isDone ? "text-emerald-600" : isActive ? "text-amber-500 font-extrabold" : "text-slate-400"
-                                            }`}
-                                        >
-                                            {step.name}
-                                        </h5>
-                                        {step.time && <span className="text-[10px] text-slate-400 font-medium">{step.time}</span>}
-                                    </div>
-                                </div>
-                            );
-                        })}
-                    </div>
-
-                    <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
-                        <span className="flex items-center gap-1 font-bold">
-                            <Truck className="w-4 h-4 text-slate-400" /> Est. Arrival:
-                        </span>
-                        <strong className="text-slate-900 font-black">{tracking.estimatedArrival}</strong>
-                    </div>
-                </div>
+                <TrackingTimeline data={tracking as any} />
             )}
         </div>
     );

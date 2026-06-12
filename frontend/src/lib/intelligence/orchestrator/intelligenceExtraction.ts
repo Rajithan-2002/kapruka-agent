@@ -176,6 +176,12 @@ If the user wants to filter or sort by price (e.g., "Under 5000", "Around 3000",
 - If they are filtering an EXISTING pool of recommendations, set intent to PRICE_REFINEMENT.
 - If this is a FRESH search (e.g., "list some juice items under 500", "I need a phone around 50000"), the intent MUST be SHOPPING or GIFTING, but you should STILL populate the price_refinement object.
 If the user is answering a question, describing features, specifications, or details of the product they want (e.g., "It should hold the rod", "blue color", "cotton material", "under 5000 LKR"), they are refining their search. In this case, you MUST classify the intent as SHOPPING (or GIFTING if it's a gift request) and carry over the product_type from the conversation history if it is not explicitly mentioned in the current turn (e.g., if they previously wanted a shower caddy, set product_type to "shower caddy" or "hangable container").
+If the request is a continuation request (e.g., "show more", "more products", "cheaper ones", "compare", "add item", "next page", "go on"), identify this as a continuation/refinement:
+- Set action to "SHOW_MORE" or "RECALL_PREVIOUS_RESULTS".
+- Set interaction_mode to "REFINEMENT" or "DISCOVERY".
+- Set search_sufficiency_score to 1.0.
+- Carry over the product_type, recipient, occasion, and budget from previous turns in the history.
+- Set isMissingCriticalInfo to false since the shopping context is already established in history.
 CRITICAL: Always map the request to the most appropriate 'mapped_category'. Example: 'healthy snacks' -> 'GROCERY'. 'birthday cake' -> 'CAKES'.
 Minimum Viable Context (MVC) Rules:
 - Gifting: MVC is met if Recipient OR Occasion is present.

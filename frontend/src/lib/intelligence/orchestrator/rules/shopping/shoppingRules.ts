@@ -95,3 +95,28 @@ export class ShowMoreRule extends BaseRule {
         return this.noMatch("Action is not SHOW_MORE or RECALL_PREVIOUS_RESULTS.");
     }
 }
+
+export class ExploreCategoriesRule extends BaseRule {
+    name = "ExploreCategoriesRule";
+    category: RuleCategory = "shopping";
+    priority: RulePriority = "HIGH";
+    ruleVersion = "1.0.0";
+
+    evaluate(context: RuleContext): RuleResult {
+        const ue = context.understandingPlan;
+        const msg = context.message.toLowerCase();
+
+        if (ue.intent === 'BROWSING' || msg.includes("category") || msg.includes("categories") || msg.includes("what gifts") || msg.includes("what can i buy")) {
+            return {
+                matched: true,
+                priority: this.priority,
+                action: "EXPLORE_CATEGORIES",
+                reason: "User wants to explore available categories",
+                confidence: 0.9,
+                trace: [`[${this.name}] Matched category exploration query: ${context.message}`]
+            };
+        }
+
+        return this.noMatch("Not a category exploration request.");
+    }
+}
