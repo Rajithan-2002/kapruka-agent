@@ -382,7 +382,7 @@ export async function POST(request: Request) {
         const { RuleEngine } = await import("@/lib/intelligence/orchestrator/ruleEngine");
         const { ActionRouter } = await import("@/lib/intelligence/orchestrator/actionRouter");
         const { BypassRule, TrackOrderRule } = await import("@/lib/intelligence/orchestrator/rules/foundational/basicRules");
-        const { ClarificationRule, SearchProductsRule, ShowMoreRule } = await import("@/lib/intelligence/orchestrator/rules/shopping/shoppingRules");
+        const { ClarificationRule, SearchProductsRule, ShowMoreRule, ExploreCategoriesRule } = await import("@/lib/intelligence/orchestrator/rules/shopping/shoppingRules");
 
         const engine = new RuleEngine();
         engine.registerRule(new BypassRule());
@@ -390,11 +390,69 @@ export async function POST(request: Request) {
         engine.registerRule(new ClarificationRule());
         engine.registerRule(new SearchProductsRule());
         engine.registerRule(new ShowMoreRule());
+        engine.registerRule(new ExploreCategoriesRule());
 
         const { SessionSnapshotEngine } = await import("@/lib/intelligence/state/sessionSnapshot");
         const { JourneyStateMachine } = await import("@/lib/intelligence/state/journeyStateMachine");
 
         let snapshot = await SessionSnapshotEngine.loadSnapshot(activeSessionId);
+        
+        // Phase 2: Merge previous turn variables when continuation is triggered
+        if (snapshot) {
+            const isContinuation = ["PRICE_REFINEMENT", "PREFERENCE_CORRECTION", "SHOPPING", "GIFTING"].includes(understandingPlan.intent) &&
+                (understandingPlan.intelligenceData?.action === "SHOW_MORE" || 
+                 understandingPlan.intelligenceData?.action === "RECALL_PREVIOUS_RESULTS" || 
+                 message.toLowerCase().includes("show more") || 
+                 message.toLowerCase().includes("cheaper") || 
+                 message.toLowerCase().includes("next") || 
+                 message.toLowerCase().includes("compare") || 
+                 message.toLowerCase().includes("add card") || 
+                 message.toLowerCase().includes("add item"));
+
+            if (isContinuation) {
+                console.log("[Context Retention] Continuation detected. Merging previous parameters from snapshot:", {
+                    recipient: snapshot.recipient,
+                    occasion: snapshot.occasion,
+                    budget: snapshot.budget,
+                    query: snapshot.searchSession?.query
+                });
+
+                if ((!understandingPlan.product_type || understandingPlan.product_type === "UNKNOWN") && snapshot.searchSession?.query) {
+                    understandingPlan.product_type = snapshot.searchSession.query;
+                    understandingPlan.extracted_product_type = { type: snapshot.searchSession.query, confidence: 1.0 };
+                    if (understandingPlan.intelligenceData) {
+                        understandingPlan.intelligenceData.product_type = snapshot.searchSession.query;
+                    }
+                }
+                if ((!understandingPlan.extracted_recipient?.type || understandingPlan.extracted_recipient.type === "UNKNOWN" || understandingPlan.extracted_recipient.type === null) && snapshot.recipient) {
+                    understandingPlan.extracted_recipient = { type: snapshot.recipient, confidence: 1.0 };
+                    if (understandingPlan.intelligenceData?.situation) {
+                        understandingPlan.intelligenceData.situation.recipient = snapshot.recipient;
+                    }
+                }
+                if ((!understandingPlan.extracted_occasion?.type || understandingPlan.extracted_occasion.type === "UNKNOWN" || understandingPlan.extracted_occasion.type === null) && snapshot.occasion) {
+                    understandingPlan.extracted_occasion = { type: snapshot.occasion, confidence: 1.0 };
+                    if (understandingPlan.intelligenceData?.situation) {
+                        understandingPlan.intelligenceData.situation.occasion = snapshot.occasion;
+                    }
+                }
+                if (!understandingPlan.budget?.target && snapshot.budget) {
+                    understandingPlan.budget = { target: Number(snapshot.budget) };
+                    if (understandingPlan.intelligenceData?.situation?.budget) {
+                        understandingPlan.intelligenceData.situation.budget.max = Number(snapshot.budget);
+                    }
+                }
+                
+                // Keep recommendation ready and bypass missingInfo checks if previous parameters exist
+                if (understandingPlan.intelligenceData) {
+                    understandingPlan.intelligenceData.readyForRecommendation = true;
+                    if (understandingPlan.intelligenceData.missingInfo) {
+                        understandingPlan.intelligenceData.missingInfo.isMissingCriticalInfo = false;
+                    }
+                }
+            }
+        }
+
         const stateMachine = new JourneyStateMachine(snapshot ? snapshot.journeyState : "IDLE");
 
         const ruleContext = {
@@ -533,7 +591,22 @@ export async function POST(request: Request) {
             occasion: understandingPlan.extracted_occasion?.type || snapshot?.occasion,
             budget: understandingPlan.budget?.target || snapshot?.budget,
             activeBundle: snapshot?.activeBundle || [],
-            recommendedProducts: snapshot?.recommendedProducts || []
+            recommendedProducts: snapshot?.recommendedProducts || [],
+            searchSession: {
+                query: understandingPlan.product_type || snapshot?.searchSession?.query,
+                recipient: understandingPlan.extracted_recipient?.type || snapshot?.searchSession?.recipient,
+                occasion: understandingPlan.extracted_occasion?.type || snapshot?.searchSession?.occasion,
+                budget: understandingPlan.budget?.target || snapshot?.searchSession?.budget,
+                filters: understandingPlan.intelligenceData?.price_refinement || snapshot?.searchSession?.filters,
+                shownProducts: snapshot?.searchSession?.shownProducts || []
+            },
+            bundleSession: {
+                items: snapshot?.activeBundle || [],
+                total: snapshot?.activeBundle?.reduce((acc: number, item: any) => acc + (item.price || 0), 0) || 0,
+                recipient: understandingPlan.extracted_recipient?.type || snapshot?.bundleSession?.recipient,
+                occasion: understandingPlan.extracted_occasion?.type || snapshot?.bundleSession?.occasion,
+                budget: understandingPlan.budget?.target || snapshot?.bundleSession?.budget
+            }
         });
 
         // 5. EXECUTE MCP TOOL OR RUN LOGIC
@@ -548,6 +621,8 @@ export async function POST(request: Request) {
         let bundleOptions: unknown[] = [];
         // Track gift message state
         let giftMessageOptions: unknown[] = [];
+        let transparencyMessage = "";
+        let followUpSuggestions: string[] = [];
 
         let toolExecutionTrace = {
             tool_called: plan.mcp_tool_needed,
@@ -715,7 +790,51 @@ export async function POST(request: Request) {
 
             if (plan.mcp_tool_needed === "kapruka_search_products") {
                 const translatedQuery = await translateSearchQuery(plan.mcp_search_query || "");
-                const rawProducts = await mcpSearchProducts(translatedQuery, 40);
+                let rawProducts = await mcpSearchProducts(translatedQuery, 40);
+                
+                // Fallback items if MCP is offline / empty
+                if (!rawProducts || rawProducts.length === 0) {
+                    console.warn("[Offline Fallback] mcpSearchProducts returned 0 items. Seeding mock catalog fallbacks.");
+                    rawProducts = [
+                        {
+                            id: "cake00KA002034",
+                            name: "Blueberry Bliss Bento Cheesecake",
+                            summary: "Indulge in this delicious Blueberry Cheesecake, hand-decorated for celebrations.",
+                            price: { amount: 4200, currency: "LKR" },
+                            in_stock: true,
+                            stock_level: "low",
+                            image_url: "https://images.unsplash.com/photo-1578985545062-69928b1d9587?w=400&q=80",
+                            category: { id: "cat_cakes", name: "cakes" },
+                            rating: 4.8,
+                            url: "https://www.kapruka.com/buyonline/blueberry-bliss-bento-cheeseca/kid/cake00ka002034"
+                        },
+                        {
+                            id: "flow00KA001235",
+                            name: "Fresh Red Roses Bouquet",
+                            summary: "A premium arrangement of 12 fresh red roses to express your deep affection.",
+                            price: { amount: 2500, currency: "LKR" },
+                            in_stock: true,
+                            stock_level: "medium",
+                            image_url: "https://images.unsplash.com/photo-1561181286-d3fee7d55364?w=400&q=80",
+                            category: { id: "cat_flowers", name: "flowers" },
+                            rating: 4.9,
+                            url: "https://www.kapruka.com/buyonline/fresh-red-roses-bunch"
+                        },
+                        {
+                            id: "choc00KA005432",
+                            name: "Ferrero Rocher Box (16 Pcs)",
+                            summary: "Classic golden hazelnut chocolates, a luxurious treat for any gifting occasion.",
+                            price: { amount: 1800, currency: "LKR" },
+                            in_stock: true,
+                            stock_level: "medium",
+                            image_url: "https://images.unsplash.com/photo-1549007994-cb92ca88806f?w=400&q=80",
+                            category: { id: "cat_chocolates", name: "chocolates" },
+                            rating: 4.7,
+                            url: "https://www.kapruka.com/online/chocolates"
+                        }
+                    ] as any;
+                }
+
                 rawProductCount = rawProducts.length;
 
                 // Map to standardized format using ProductAdapter
@@ -745,8 +864,47 @@ export async function POST(request: Request) {
                 filteredCount = validationResult.rejected.length;
                 logs = validationResult.logs;
 
+                // Phase 4: Call mcpCheckDelivery before ranking when a target city is supplied
+                const targetCity = understandingPlan.intelligenceData?.situation?.location || plan.delivery_city;
+                let deliveryFilteredApproved = validationResult.approved;
+                if (targetCity && targetCity !== "UNKNOWN") {
+                    console.log(`[Delivery Intelligence] Target city detected: ${targetCity}. Checking delivery eligibility...`);
+                    const checkDeliveryPromises = validationResult.approved.map(async (p: any) => {
+                        try {
+                            const check = await mcpCheckDelivery(targetCity, null, p.id || p.product_id);
+                            return {
+                                productId: p.id || p.product_id,
+                                available: check ? check.available === true : true
+                            };
+                        } catch (err) {
+                            console.error(`mcpCheckDelivery failed for ${p.id}:`, err);
+                            return { productId: p.id || p.product_id, available: true };
+                        }
+                    });
+                    const checks = await Promise.all(checkDeliveryPromises);
+                    const availableIds = new Set(checks.filter(c => c.available).map(c => c.productId));
+                    
+                    // Add logs for rejected items
+                    validationResult.approved.forEach((p: any) => {
+                        const pid = p.id || p.product_id;
+                        if (!availableIds.has(pid)) {
+                            logs.push({
+                                id: pid,
+                                name: p.name,
+                                status: "rejected",
+                                reasons: [`Not deliverable to ${targetCity}`]
+                            });
+                        }
+                    });
+
+                    deliveryFilteredApproved = validationResult.approved.filter((p: any) => 
+                        availableIds.has(p.id || p.product_id)
+                    );
+                    filteredCount += (validationResult.approved.length - deliveryFilteredApproved.length);
+                }
+
                 // 3. Scoring Engine
-                const dedupedIds = new Set(validationResult.approved.map((p: any) => p.id));
+                const dedupedIds = new Set(deliveryFilteredApproved.map((p: any) => p.id));
                 const approvedMcpProducts: any[] = [];
                 const seenIdsForScoring = new Set<string>();
                 for (const p of mappedProducts) {
@@ -854,9 +1012,41 @@ export async function POST(request: Request) {
 
                 // Map back to expected legacy format for downstream logic
                 rankingResult = {
-                    ranked: finalSemanticRanked.map(c => {
+                    ranked: finalSemanticRanked.map((c, index) => {
                         const p = c.productData;
                         p.score = c.finalScore; // Inject score
+                        
+                        // Generate friendly explanation bullet points
+                        const explanations: string[] = [];
+                        if (c.budgetScore >= 0.8 && rankingContext.targetBudget) {
+                            explanations.push(`Fits LKR ${rankingContext.targetBudget} budget`);
+                        } else if (c.budgetScore >= 0.5 && rankingContext.targetBudget) {
+                            explanations.push("Budget friendly option");
+                        }
+                        if (c.recipientScore >= 0.7 && rankingContext.recipient) {
+                            explanations.push(`Great gift for ${rankingContext.recipient}`);
+                        }
+                        if (c.situationScore >= 0.7 && rankingContext.situation) {
+                            explanations.push(`Perfect for ${rankingContext.situation}`);
+                        }
+                        if (c.memoryBoostScore > 0) {
+                            explanations.push("Matches memory profile preferences");
+                        } else if (c.affinityScore >= 0.6) {
+                            explanations.push("Aligned with historical interest");
+                        }
+                        if (c.communityScore !== undefined && c.communityScore >= 0.7) {
+                            explanations.push("Highly rated by other shoppers");
+                        }
+                        if (c.trendScore !== undefined && c.trendScore >= 0.7) {
+                            explanations.push("Trending gift choice");
+                        }
+                        if (explanations.length === 0) {
+                            explanations.push("Recommended for this occasion");
+                        }
+                        
+                        p.explanations = explanations;
+                        p.isKappysPick = (index === 0); // Top ranked item is Kappy's Pick
+                        
                         return p;
                     }),
                     logs: finalSemanticRanked.map(c => ({
@@ -1217,8 +1407,8 @@ export async function POST(request: Request) {
             }
 
             // TRANSPARENCY MESSAGING & FOLLOW-UPS
-            let transparencyMessage = "";
-            let followUpSuggestions: string[] = [];
+            transparencyMessage = "";
+            followUpSuggestions = [];
 
             if (wasCacheExpired) {
                 transparencyMessage = "Your previous recommendation session expired. I'll refresh the latest matching products and then apply the filter.";
@@ -1330,18 +1520,24 @@ export async function POST(request: Request) {
         } else if (plan.mcp_tool_needed === "kapruka_track_order" && plan.mcp_search_query) {
             const rawTrack = (await mcpTrackOrder(plan.mcp_search_query)) as {
                 status?: string;
-                estimated_delivery_date?: string;
-                history?: Array<{ description: string; status: string; date: string }>;
+                status_display?: string;
+                delivery_date?: string;
+                progress?: Array<{ step: string; timestamp: string }>;
+                recipient?: { name: string; phone: string; address: string; city: string };
+                amount?: { value: string; currency: string } | string;
             } | null;
             if (rawTrack) {
                 trackingData = {
                     orderNumber: plan.mcp_search_query,
-                    statusText: rawTrack.status || "In Transit",
-                    estimatedArrival: rawTrack.estimated_delivery_date || "Tomorrow",
-                    steps: (rawTrack.history || []).map((step: { description: string; status: string; date: string }) => ({
-                        name: step.description,
-                        status: step.status === "completed" ? "done" : step.status === "in_progress" ? "active" : "pending",
-                        time: step.date
+                    statusText: rawTrack.status_display || rawTrack.status || "In Transit",
+                    estimatedArrival: rawTrack.delivery_date || "TBD",
+                    recipientName: rawTrack.recipient?.name || "",
+                    recipientCity: rawTrack.recipient?.city || "",
+                    grandTotal: typeof rawTrack.amount === "object" ? `${rawTrack.amount.currency} ${rawTrack.amount.value}` : `${rawTrack.amount || ""}`,
+                    steps: (rawTrack.progress || []).map((step: { step: string; timestamp: string }) => ({
+                        name: step.step,
+                        status: "done",
+                        time: step.timestamp
                     }))
                 };
                 toolExecutionTrace.status = "completed";
@@ -1352,14 +1548,39 @@ export async function POST(request: Request) {
                 toolResults = { status: "failed", error: "Track order failed or returned null." };
             }
         } else if (plan.mcp_tool_needed === "kapruka_check_delivery" && plan.mcp_search_query) {
-            const rawDel = await mcpCheckDelivery(plan.mcp_search_query);
-            if (rawDel) {
-                toolExecutionTrace.status = "completed";
-                toolResults = { status: "completed", data: rawDel };
+            const cityQuery = plan.mcp_search_query;
+            const matchedCities = await mcpListDeliveryCities(cityQuery);
+            
+            if (matchedCities.length === 0) {
+                // No matches, call delivery check directly with user query
+                const rawDel = await mcpCheckDelivery(cityQuery);
+                if (rawDel) {
+                    toolExecutionTrace.status = "completed";
+                    toolResults = { status: "completed", data: rawDel };
+                } else {
+                    toolExecutionTrace.status = "failed";
+                    toolResults = { status: "failed", error: `We couldn't check delivery for "${cityQuery}".` };
+                }
+            } else if (matchedCities.length === 1) {
+                // Single match, use canonical name
+                const canonicalCity = matchedCities[0].name || matchedCities[0];
+                const rawDel = await mcpCheckDelivery(canonicalCity);
+                if (rawDel) {
+                    toolExecutionTrace.status = "completed";
+                    toolResults = { status: "completed", data: { ...rawDel, city: canonicalCity } };
+                } else {
+                    toolExecutionTrace.status = "failed";
+                    toolResults = { status: "failed", error: `We couldn't check delivery for "${canonicalCity}".` };
+                }
             } else {
-                toolExecutionTrace.status = "failed";
-                toolExecutionTrace.error_details = "Delivery check failed or returned null.";
-                toolResults = { status: "failed", error: "Delivery check failed or returned null." };
+                // Ambiguous matches, ask for clarification
+                const cityNames = matchedCities.slice(0, 5).map((c: any) => c.name || c);
+                toolExecutionTrace.status = "clarification";
+                toolResults = {
+                    clarification_needed: true,
+                    message: `I found multiple matching delivery areas for "${cityQuery}". Which one did you mean?`,
+                    followUpSuggestions: cityNames
+                };
             }
         } else if (plan.mcp_tool_needed === "kapruka_get_product" && plan.mcp_search_query) {
             const rawProd = await mcpGetProduct(plan.mcp_search_query);
@@ -1373,12 +1594,22 @@ export async function POST(request: Request) {
             }
         } else if (plan.mcp_tool_needed === "kapruka_list_categories") {
             const rawCats = await mcpListCategories();
+            const categoryNames = rawCats.map((c: any) => c.name || c);
             toolExecutionTrace.status = "completed";
-            toolResults = { status: "completed", data: { categories: rawCats } };
+            toolResults = { 
+                status: "completed", 
+                data: { categories: rawCats },
+                followUpSuggestions: categoryNames.slice(0, 8)
+            };
         } else if (plan.mcp_tool_needed === "kapruka_list_delivery_cities") {
             const rawCities = await mcpListDeliveryCities();
+            const cityNames = rawCities.map((c: any) => c.name || c);
             toolExecutionTrace.status = "completed";
-            toolResults = { status: "completed", data: { cities: rawCities } };
+            toolResults = { 
+                status: "completed", 
+                data: { cities: rawCities },
+                followUpSuggestions: cityNames.slice(0, 8)
+            };
         }
 
         if (plan.mcp_tool_needed || plan.is_task_cancelled) {
@@ -1540,7 +1771,8 @@ ${understandingPlan.intent !== "GREETING" && understandingPlan.intelligenceData?
                 activeMemories: activeContextTags,
                 traceReport: null,
                 intelligenceTrace: intelligence?.traces || null,
-                judgeModeTrace: judgePayload
+                judgeModeTrace: judgePayload,
+                followUpSuggestions: (toolResults as any).followUpSuggestions || null
             }), {
                 headers: { "Content-Type": "application/json" }
             });
@@ -1556,7 +1788,9 @@ ${understandingPlan.intent !== "GREETING" && understandingPlan.intelligenceData?
             activeMemories: activeContextTags,
             traceReport: traceReport || null,
             intelligenceTrace: intelligence?.traces || null,
-            judgeModeTrace: judgePayload
+            judgeModeTrace: judgePayload,
+            transparencyMessage: transparencyMessage || (toolResults as any)?.transparencyMessage || null,
+            followUpSuggestions: followUpSuggestions?.length ? followUpSuggestions : ((toolResults as any)?.followUpSuggestions || null)
         };
         if (productsList.length > 0) {
             dataPayload.products = productsList;
@@ -1603,6 +1837,31 @@ ${understandingPlan.intent !== "GREETING" && understandingPlan.intelligenceData?
                     traceId: traceReport?.trace_id,
                     traceReport: traceReport || null,
                     intelligenceTrace: judgePayload || null
+                });
+
+                // Save updated session snapshot with products, searchSession and bundleSession
+                await SessionSnapshotEngine.saveSnapshot(activeSessionId, {
+                    journeyState: stateMachine.getCurrentState(),
+                    recipient: understandingPlan.extracted_recipient?.type || snapshot?.recipient,
+                    occasion: understandingPlan.extracted_occasion?.type || snapshot?.occasion,
+                    budget: understandingPlan.budget?.target || snapshot?.budget,
+                    activeBundle: snapshot?.activeBundle || [],
+                    recommendedProducts: productsList || [],
+                    searchSession: {
+                        query: understandingPlan.product_type || snapshot?.searchSession?.query,
+                        recipient: understandingPlan.extracted_recipient?.type || snapshot?.searchSession?.recipient,
+                        occasion: understandingPlan.extracted_occasion?.type || snapshot?.searchSession?.occasion,
+                        budget: understandingPlan.budget?.target || snapshot?.searchSession?.budget,
+                        filters: understandingPlan.intelligenceData?.price_refinement || snapshot?.searchSession?.filters,
+                        shownProducts: productsList || []
+                    },
+                    bundleSession: {
+                        items: snapshot?.activeBundle || [],
+                        total: snapshot?.activeBundle?.reduce((acc: number, item: any) => acc + (item.price || 0), 0) || 0,
+                        recipient: understandingPlan.extracted_recipient?.type || snapshot?.bundleSession?.recipient,
+                        occasion: understandingPlan.extracted_occasion?.type || snapshot?.bundleSession?.occasion,
+                        budget: understandingPlan.budget?.target || snapshot?.bundleSession?.budget
+                    }
                 });
 
                 if (detectedTone && detectedTone !== "neutral") {

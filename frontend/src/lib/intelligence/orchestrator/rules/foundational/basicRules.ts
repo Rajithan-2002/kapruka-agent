@@ -8,20 +8,59 @@ export class TrackOrderRule extends BaseRule {
 
     evaluate(context: RuleContext): RuleResult {
         const ue = context.understandingPlan;
+        const msgLower = context.message.toLowerCase();
         
-        if (ue.intent === 'TRACK_ORDER') {
+        const isTrackingIntent = 
+            ue.intent === 'TRACK_ORDER' || 
+            ue.intent === 'TRACKING' || 
+            msgLower.includes('track') || 
+            /vimp[0-9a-z]+/i.test(context.message) ||
+            /kp[0-9]+/i.test(context.message);
+        
+        if (isTrackingIntent) {
+            const words = context.message.split(/\s+/);
+            let orderNumber = "";
+            
+            // Look for VIMP... or KP... format order reference
+            for (const word of words) {
+                const cleanWord = word.replace(/[^A-Za-z0-9]/g, '');
+                if (/^(?:VIMP|KP)[A-Z0-9]+$/i.test(cleanWord)) {
+                    orderNumber = cleanWord;
+                    break;
+                }
+            }
+            
+            // Fallback: any uppercase-dominant alphanumeric token of length 8-15
+            if (!orderNumber) {
+                for (const word of words) {
+                    const cleanWord = word.replace(/[^A-Za-z0-9]/g, '');
+                    if (cleanWord.length >= 6 && /^[A-Z0-9]+$/i.test(cleanWord) && !/^[0-9]+$/.test(cleanWord) && !/^[A-Z]+$/i.test(cleanWord)) {
+                        orderNumber = cleanWord;
+                        break;
+                    }
+                }
+            }
+
+            // Fallback: last word in the query
+            if (!orderNumber && words.length > 0) {
+                const lastWord = words[words.length - 1].replace(/[^A-Za-z0-9]/g, '');
+                if (lastWord.length >= 4) {
+                    orderNumber = lastWord;
+                }
+            }
+
             return {
                 matched: true,
                 priority: this.priority,
                 action: "TRACK_ORDER",
                 reason: "User explicitly asked to track an order",
                 confidence: 1.0,
-                mcp_search_query: context.message,
-                trace: [`[${this.name}] Intent matched TRACK_ORDER`]
+                mcp_search_query: orderNumber || context.message,
+                trace: [`[${this.name}] Intent matched tracking with order number: ${orderNumber || context.message}`]
             };
         }
 
-        return this.noMatch("Intent is not TRACK_ORDER");
+        return this.noMatch("Intent is not tracking");
     }
 }
 

@@ -6,6 +6,23 @@ const supabaseKey = process.env.SUPABASE_SERVICE_KEY || "";
 const useCloud = !!(supabaseUrl && supabaseKey);
 const supabase = useCloud ? createClient(supabaseUrl, supabaseKey) : null;
 
+export interface SearchSession {
+    query?: string;
+    recipient?: string;
+    occasion?: string;
+    budget?: string | number;
+    filters?: any;
+    shownProducts?: any[];
+}
+
+export interface BundleSession {
+    items?: any[];
+    total?: number;
+    recipient?: string;
+    occasion?: string;
+    budget?: string | number;
+}
+
 export interface SessionSnapshot {
     sessionId: string;
     journeyState: JourneyState;
@@ -14,8 +31,11 @@ export interface SessionSnapshot {
     budget?: string | number;
     activeBundle: any[];
     recommendedProducts: any[];
+    searchSession?: SearchSession;
+    bundleSession?: BundleSession;
     lastUpdated: string;
 }
+
 
 export class SessionSnapshotEngine {
     // In-memory fallback if Supabase is disabled

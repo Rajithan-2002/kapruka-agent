@@ -102,7 +102,10 @@ export async function mcpTrackOrder(orderNumber: string): Promise<Record<string,
         const response = await client.callTool({
             name: "kapruka_track_order",
             arguments: {
-                order_number: orderNumber
+                params: {
+                    order_number: orderNumber,
+                    response_format: "json"
+                }
             }
         });
 
@@ -126,13 +129,18 @@ export async function mcpTrackOrder(orderNumber: string): Promise<Record<string,
 }
 
 // Wrap check delivery tool
-export async function mcpCheckDelivery(city: string): Promise<Record<string, unknown> | null> {
+export async function mcpCheckDelivery(city: string, deliveryDate?: string | null, productId?: string | null): Promise<Record<string, unknown> | null> {
     try {
         const client = await getMCPClient();
         const response = await client.callTool({
             name: "kapruka_check_delivery",
             arguments: {
-                city
+                params: {
+                    city,
+                    delivery_date: deliveryDate || null,
+                    product_id: productId || null,
+                    response_format: "json"
+                }
             }
         });
 
@@ -155,48 +163,140 @@ export async function mcpCheckDelivery(city: string): Promise<Record<string, unk
     }
 }
 
-// Stub for kapruka_get_product (Master Prompt Tool 2)
+// Wrap get product tool (Master Prompt Tool 2)
 export async function mcpGetProduct(productId: string): Promise<Record<string, unknown> | null> {
-    console.log(`[MCP Stub] kapruka_get_product called for ${productId}`);
-    // Fallback mock since this MCP endpoint might not exist yet
-    return {
-        id: productId,
-        description: "This is a detailed description retrieved from the Kapruka product database. It includes specifications, dimensions, and warranty information.",
-        available_options: ["Standard", "Premium"],
-        images: ["https://example.com/image1.jpg", "https://example.com/image2.jpg"]
-    };
+    try {
+        const client = await getMCPClient();
+        const response = await client.callTool({
+            name: "kapruka_get_product",
+            arguments: {
+                params: {
+                    product_id: productId,
+                    response_format: "json"
+                }
+            }
+        });
+
+        const res = response as unknown as {
+            structuredContent?: { result?: string };
+            content?: Array<{ text?: string }>;
+        };
+        if (res.structuredContent?.result) {
+            return JSON.parse(res.structuredContent.result) as Record<string, unknown>;
+        }
+
+        if (res.content && res.content[0]?.text) {
+            return JSON.parse(res.content[0].text) as Record<string, unknown>;
+        }
+
+        return null;
+    } catch (error) {
+        console.error("Error calling kapruka_get_product tool:", error);
+        return null;
+    }
 }
 
-// Stub for kapruka_list_categories (Master Prompt Tool 3)
-export async function mcpListCategories(): Promise<string[]> {
-    console.log(`[MCP Stub] kapruka_list_categories called`);
-    return [
-        "Cakes & Bakery",
-        "Flowers",
-        "Chocolates",
-        "Hampers & Gift Sets",
-        "Electronics & Gadgets",
-        "Soft Toys",
-        "Clothing & Fashion",
-        "Beauty & Grooming",
-        "Grocery",
-        "Baby Products"
-    ];
+// Wrap list categories tool (Master Prompt Tool 3)
+export async function mcpListCategories(depth = 1): Promise<any[]> {
+    try {
+        const client = await getMCPClient();
+        const response = await client.callTool({
+            name: "kapruka_list_categories",
+            arguments: {
+                params: {
+                    depth,
+                    response_format: "json"
+                }
+            }
+        });
+
+        const res = response as unknown as {
+            structuredContent?: { result?: string };
+            content?: Array<{ text?: string }>;
+        };
+        let categoriesData: any = null;
+        if (res.structuredContent?.result) {
+            categoriesData = JSON.parse(res.structuredContent.result);
+        } else if (res.content && res.content[0]?.text) {
+            categoriesData = JSON.parse(res.content[0].text);
+        }
+
+        if (categoriesData && Array.isArray(categoriesData.categories)) {
+            return categoriesData.categories;
+        }
+
+        return [];
+    } catch (error) {
+        console.error("Error calling kapruka_list_categories tool:", error);
+        return [];
+    }
 }
 
-// Stub for kapruka_list_delivery_cities (Master Prompt Tool 4)
-export async function mcpListDeliveryCities(): Promise<string[]> {
-    console.log(`[MCP Stub] kapruka_list_delivery_cities called`);
-    return [
-        "Colombo (1-15)",
-        "Gampaha",
-        "Kandy",
-        "Galle",
-        "Kurunegala",
-        "Negombo",
-        "Jaffna",
-        "Matara",
-        "Nuwara Eliya",
-        "Island-wide delivery available for non-perishable items."
-    ];
+// Wrap list delivery cities tool (Master Prompt Tool 4)
+export async function mcpListDeliveryCities(query = ""): Promise<any[]> {
+    try {
+        const client = await getMCPClient();
+        const response = await client.callTool({
+            name: "kapruka_list_delivery_cities",
+            arguments: {
+                params: {
+                    query,
+                    response_format: "json"
+                }
+            }
+        });
+
+        const res = response as unknown as {
+            structuredContent?: { result?: string };
+            content?: Array<{ text?: string }>;
+        };
+        let citiesData: any = null;
+        if (res.structuredContent?.result) {
+            citiesData = JSON.parse(res.structuredContent.result);
+        } else if (res.content && res.content[0]?.text) {
+            citiesData = JSON.parse(res.content[0].text);
+        }
+
+        if (citiesData && Array.isArray(citiesData.cities)) {
+            return citiesData.cities;
+        }
+
+        return [];
+    } catch (error) {
+        console.error("Error calling kapruka_list_delivery_cities tool:", error);
+        return [];
+    }
+}
+
+// Wrap create order tool
+export async function mcpCreateOrder(params: any): Promise<Record<string, any> | null> {
+    try {
+        const client = await getMCPClient();
+        const response = await client.callTool({
+            name: "kapruka_create_order",
+            arguments: {
+                params: {
+                    ...params,
+                    response_format: "json"
+                }
+            }
+        });
+
+        const res = response as unknown as {
+            structuredContent?: { result?: string };
+            content?: Array<{ text?: string }>;
+        };
+        if (res.structuredContent?.result) {
+            return JSON.parse(res.structuredContent.result) as Record<string, any>;
+        }
+
+        if (res.content && res.content[0]?.text) {
+            return JSON.parse(res.content[0].text) as Record<string, any>;
+        }
+
+        return null;
+    } catch (error) {
+        console.error("Error calling kapruka_create_order tool:", error);
+        return null;
+    }
 }

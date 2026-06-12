@@ -12,6 +12,7 @@ import ChatMessage, { Message, Product } from "./ChatMessage";
 import { createClient } from "@/lib/supabase/client";
 import { User } from "@supabase/supabase-js";
 import JudgePanel from "./JudgePanel";
+import MemoryVault from "./MemoryVault";
 
 const getUniqueId = (prefix: string): string => `${prefix}-${Date.now()}`;
 
@@ -112,15 +113,25 @@ export default function ChatWindow() {
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
   const [checkoutStep, setCheckoutStep] = useState<"summary" | "payment" | "success">("summary");
   const [recipientName, setRecipientName] = useState("Nethmi");
-  const [deliveryAddress, setDeliveryAddress] = useState("No 12, Flower Rd, Colombo 03");
+  const [recipientPhone, setRecipientPhone] = useState("+94771234567");
+  const [deliveryAddress, setDeliveryAddress] = useState("No 12, Flower Rd");
+  const [deliveryCity, setDeliveryCity] = useState("Colombo 03");
+  const [senderName, setSenderName] = useState("Rajithan");
   const [giftMessageText, setGiftMessageText] = useState("Happy Birthday Nethmi! Hope you love this surprise package. - Raji");
   const [isAvailableToday, setIsAvailableToday] = useState(true);
+  const [checkoutUrl, setCheckoutUrl] = useState("");
+  const [orderRef, setOrderRef] = useState("");
 
   // Judge panel / diagnostics
   const [isJudgeMode, setIsJudgeMode] = useState(false);
   const [selectedTraceData, setSelectedTraceData] = useState<any>(null);
   const [isDebugMode, setIsDebugMode] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  // Product Detail Modal State
+  const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
+  const [modalProductDetails, setModalProductDetails] = useState<any | null>(null);
+  const [isProductModalLoading, setIsProductModalLoading] = useState(false);
 
   // Voice Simulation state
   const [isVoiceSimulating, setIsVoiceSimulating] = useState(false);
@@ -762,25 +773,92 @@ export default function ChatWindow() {
     }
   };
 
+  const handleOpenProductModal = async (productId: string) => {
+    setSelectedProductId(productId);
+    setIsProductModalLoading(true);
+    setModalProductDetails(null);
+    try {
+      const res = await fetch(`/api/product?productId=${productId}`);
+      const data = await res.json();
+      if (data.product) {
+        setModalProductDetails(data.product);
+      }
+    } catch (e) {
+      console.error("Failed to fetch product details:", e);
+    } finally {
+      setIsProductModalLoading(false);
+    }
+  };
+
   const removeFromBundle = (productId: string) => {
     setBundle(prev => prev.filter(item => item.id !== productId));
   };
 
   const bundleTotal = bundle.reduce((sum, item) => sum + item.price, 0);
 
-  const handleCheckoutSubmit = (e: React.FormEvent) => {
+  const handleCheckoutSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setCheckoutStep("payment");
-    setTimeout(() => {
-      setCheckoutStep("success");
-      const confirmationMsg: Message = {
-        id: `success-${Date.now()}`,
-        role: "assistant",
-        content: `Machan, payment went through! 🎉\n\nI have created your secure order. I'll monitor the delivery slot carefully and update you as we proceed.\n\n- **Recipient:** ${recipientName}\n- **Message:** "${giftMessageText}"\n- **Delivery Address:** ${deliveryAddress}\n- **Total Paid:** LKR ${(bundleTotal).toLocaleString()}\n\nThank you for choosing Kappy! 😊`
+    try {
+      const formattedCart = bundle.map(item => ({
+        product_id: item.id,
+        quantity: 1
+      }));
+
+      // Set delivery date 3 days from now
+      const targetDate = new Date();
+      targetDate.setDate(targetDate.getDate() + 3);
+      const isoDate = targetDate.toISOString().split("T")[0];
+
+      const checkoutPayload = {
+        cart: formattedCart,
+        recipient: {
+          name: recipientName,
+          phone: recipientPhone
+        },
+        delivery: {
+          address: deliveryAddress,
+          city: deliveryCity,
+          date: isoDate
+        },
+        sender: {
+          name: senderName
+        },
+        gift_message: giftMessageText
       };
-      setMessages(prev => [...prev, confirmationMsg]);
-      setBundle([]);
-    }, 1500);
+
+      const response = await fetch("/api/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(checkoutPayload)
+      });
+
+      const data = await response.json();
+      if (data.success && data.checkout_url) {
+        setCheckoutUrl(data.checkout_url);
+        setOrderRef(data.order_ref);
+        setCheckoutStep("success");
+      } else {
+        alert("Checkout Failed: " + (data.error || "Unknown error"));
+        setCheckoutStep("summary");
+      }
+    } catch (err: any) {
+      console.error("Checkout Exception:", err);
+      alert("Error initiating checkout: " + err.message);
+      setCheckoutStep("summary");
+    }
+  };
+
+  const handleCheckoutConfirm = () => {
+    const confirmationMsg: Message = {
+      id: `success-${Date.now()}`,
+      role: "assistant",
+      content: `Machan, checkout details are locked in! 🛒\n\n- **Order Reference:** ${orderRef}\n- **Recipient:** ${recipientName} (${recipientPhone})\n- **Delivery:** ${deliveryAddress}, ${deliveryCity}\n- **Gift Message:** "${giftMessageText}"\n- **Total Amount:** LKR ${bundleTotal.toLocaleString()}\n\nMake sure to complete the payment via the secure portal link. You can track this order later using the order number sent to your email! 💳`
+    };
+    setMessages(prev => [...prev, confirmationMsg]);
+    setBundle([]);
+    setIsCheckoutOpen(false);
+    setCheckoutStep("summary");
   };
 
   if (isAuthLoading) {
@@ -979,6 +1057,14 @@ export default function ChatWindow() {
               title="Dev Mode"
             >
               <BrainCircuit className="w-4 h-4" />
+            </button>
+
+            <button
+              onClick={handlePreloadDemoData}
+              className="px-2.5 py-1.5 bg-gradient-to-r from-rose-500 to-amber-500 hover:from-rose-600 hover:to-amber-600 active:scale-95 text-white font-extrabold text-[9px] uppercase rounded-xl transition-all shadow-sm flex items-center gap-1 cursor-pointer"
+              title="Load Nethmi & Dad Demo Profile"
+            >
+              🎁 Demo Mode
             </button>
 
             {/* Hamper indicator toggler */}
@@ -1415,60 +1501,74 @@ export default function ChatWindow() {
 
           {/* CHAT TAB VIEW */}
           {activeTab === "chat" && (
-            <div className="flex flex-col h-full bg-slate-50 relative">
-              <div ref={scrollContainerRef} className="flex-1 overflow-y-auto px-5 py-5 space-y-4 scrollbar-thin">
-                {messages.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center h-full text-center p-6 text-slate-400">
-                    <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-amber-400 to-rose-500 flex items-center justify-center text-white font-black text-lg mb-3 shadow-md">K</div>
-                    <h3 className="font-bold text-sm text-slate-700">Chat with Kappy</h3>
-                    <p className="text-xs text-slate-400 max-w-xs mt-1 leading-relaxed">
-                      Describe your gifting requirement, budget, or enter tracking details. E.g. "Gift for Nethmi under 5000"
-                    </p>
-                  </div>
-                ) : (
-                  messages.map((msg, i) => (
-                    <div 
-                      key={msg.id}
-                      onClick={() => {
-                        if (isJudgeMode) {
-                          setSelectedTraceData({
-                            traceReport: msg.traceReport,
-                            intelligenceTrace: msg.judgeModeTrace,
-                            message: msg.content
-                          });
-                        }
-                      }}
-                      className={isJudgeMode ? "cursor-pointer hover:bg-slate-100/50 rounded-xl p-1 -mx-1" : ""}
-                    >
-                      <ChatMessage
-                        message={msg}
-                        isDebugMode={isDebugMode}
-                        userId={user?.id}
-                        sessionId={activeConversationId}
-                        onAddToBundle={addToBundle}
-                        onFollowUpClick={(text) => handleSendMessage(text)}
-                      />
+            <div className="flex h-full bg-slate-50 relative overflow-hidden">
+              <div className="flex-1 flex flex-col h-full relative">
+                <div ref={scrollContainerRef} className="flex-1 overflow-y-auto px-5 py-5 space-y-4 scrollbar-thin">
+                  {messages.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center h-full text-center p-6 text-slate-400">
+                      <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-amber-400 to-rose-500 flex items-center justify-center text-white font-black text-lg mb-3 shadow-md">K</div>
+                      <h3 className="font-bold text-sm text-slate-700">Chat with Kappy</h3>
+                      <p className="text-xs text-slate-400 max-w-xs mt-1 leading-relaxed">
+                        Describe your gifting requirement, budget, or enter tracking details. E.g. "Gift for Nethmi under 5000"
+                      </p>
                     </div>
-                  ))
-                )}
+                  ) : (
+                    messages.map((msg, i) => (
+                      <div 
+                        key={msg.id}
+                        onClick={() => {
+                          if (isJudgeMode) {
+                            setSelectedTraceData({
+                              traceReport: msg.traceReport,
+                              intelligenceTrace: msg.judgeModeTrace,
+                              message: msg.content
+                            });
+                          }
+                        }}
+                        className={isJudgeMode ? "cursor-pointer hover:bg-slate-100/50 rounded-xl p-1 -mx-1" : ""}
+                      >
+                        <ChatMessage
+                          message={msg}
+                          isDebugMode={isDebugMode}
+                          userId={user?.id}
+                          sessionId={activeConversationId}
+                          onAddToBundle={addToBundle}
+                          onFollowUpClick={(text) => handleSendMessage(text)}
+                          onProductClick={handleOpenProductModal}
+                        />
+                      </div>
+                    ))
+                  )}
 
-                {isTyping && (
-                  <ChatMessage
-                    message={{
-                      id: "typing",
-                      role: "assistant",
-                      content: "",
-                      isLoading: true,
-                      loadingText: typingText
-                    }}
+                  {isTyping && (
+                    <ChatMessage
+                      message={{
+                        id: "typing",
+                        role: "assistant",
+                        content: "",
+                        isLoading: true,
+                        loadingText: typingText
+                      }}
+                    />
+                  )}
+                </div>
+
+                {/* Chat tab bottom input */}
+                <div className="p-4 bg-white border-t border-slate-100">
+                  <ChatInput onSendMessage={handleSendMessage} disabled={isTyping} placeholder="Ask Kappy..." />
+                </div>
+              </div>
+
+              {/* Memory Vault Sidebar (Desktop View / Toggleable) */}
+              {isDebugMode && (
+                <div className="hidden lg:block">
+                  <MemoryVault
+                    relationships={relationships}
+                    preferences={preferences}
+                    activeMemories={activeMemories}
                   />
-                )}
-              </div>
-
-              {/* Chat tab bottom input */}
-              <div className="p-4 bg-white border-t border-slate-100">
-                <ChatInput onSendMessage={handleSendMessage} disabled={isTyping} placeholder="Ask Kappy..." />
-              </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -1949,11 +2049,45 @@ export default function ChatWindow() {
                   </div>
 
                   <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Delivery Address</label>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Recipient Phone</label>
                     <input
                       type="text"
-                      value={deliveryAddress}
-                      onChange={(e) => setDeliveryAddress(e.target.value)}
+                      value={recipientPhone}
+                      onChange={(e) => setRecipientPhone(e.target.value)}
+                      required
+                      className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-violet-500 text-slate-800 font-bold"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Delivery Address</label>
+                      <input
+                        type="text"
+                        value={deliveryAddress}
+                        onChange={(e) => setDeliveryAddress(e.target.value)}
+                        required
+                        className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-violet-500 text-slate-800 font-bold"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Delivery City</label>
+                      <input
+                        type="text"
+                        value={deliveryCity}
+                        onChange={(e) => setDeliveryCity(e.target.value)}
+                        required
+                        className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-violet-500 text-slate-800 font-bold"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Sender Name</label>
+                    <input
+                      type="text"
+                      value={senderName}
+                      onChange={(e) => setSenderName(e.target.value)}
                       required
                       className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-violet-500 text-slate-800 font-bold"
                     />
@@ -1976,7 +2110,7 @@ export default function ChatWindow() {
                     <Truck className="w-4 h-4 text-emerald-600" />
                     <span className="text-emerald-800 font-bold">Delivery Estimate:</span>
                   </div>
-                  <span className="font-extrabold text-emerald-700">🚚 Today (Before 6 PM)</span>
+                  <span className="font-extrabold text-emerald-700">🚚 Sandbox: 3 Days</span>
                 </div>
 
                 <div className="pt-2 border-t border-slate-100 flex justify-between items-center text-xs">
@@ -1988,7 +2122,7 @@ export default function ChatWindow() {
                   type="submit"
                   className="w-full py-3 bg-gradient-to-r from-amber-500 to-rose-500 hover:from-amber-600 hover:to-rose-600 text-white font-extrabold text-xs rounded-xl shadow-md transition-all active:scale-95 cursor-pointer"
                 >
-                  Proceed to Payment
+                  Generate Kapruka Order
                 </button>
               </form>
             )}
@@ -1998,7 +2132,7 @@ export default function ChatWindow() {
                 <div className="w-10 h-10 border-4 border-violet-600 border-t-transparent rounded-full animate-spin" />
                 <div>
                   <h4 className="font-extrabold text-slate-800 text-sm">Authorizing Gateway...</h4>
-                  <p className="text-[10px] text-slate-400 mt-1 font-bold">Verifying merchant credit with Kapruka engine.</p>
+                  <p className="text-[10px] text-slate-400 mt-1 font-bold">Connecting to Kapruka MCP Server...</p>
                 </div>
               </div>
             )}
@@ -2009,20 +2143,122 @@ export default function ChatWindow() {
                   <Check className="w-6 h-6 text-emerald-500" />
                 </div>
                 <div>
-                  <h4 className="font-extrabold text-slate-800 text-sm">Hamper Placed Successfully!</h4>
+                  <h4 className="font-extrabold text-slate-800 text-sm">Order Created Successfully!</h4>
                   <p className="text-[10px] text-slate-400 font-bold mt-1">
-                    Your gift order has been created. Real-time delivery has started.
+                    Reference: <span className="text-slate-800 font-black">{orderRef}</span>
+                  </p>
+                  <p className="text-[10px] text-slate-400 font-medium leading-relaxed mt-2">
+                    Click the payment button below to complete checkout on the official Kapruka portal.
                   </p>
                 </div>
-                <button
-                  onClick={() => setIsCheckoutOpen(false)}
-                  className="px-6 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition-all active:scale-95 cursor-pointer"
+                <a
+                  href={checkoutUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full py-2.5 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white text-xs font-black rounded-xl text-center shadow-md transition-all active:scale-95 flex items-center justify-center gap-1.5"
                 >
-                  Return to Kappy
+                  💳 Complete Payment (Kapruka Link)
+                </a>
+                <button
+                  onClick={handleCheckoutConfirm}
+                  className="w-full py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition-all active:scale-95 cursor-pointer"
+                >
+                  Close & Return
                 </button>
               </div>
             )}
+          </div>
+        </div>
+      )}
 
+      {selectedProductId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
+          <div className="w-full max-w-2xl bg-white border border-slate-100 rounded-3xl shadow-2xl overflow-hidden animate-scale-up flex flex-col md:flex-row h-[500px] md:h-[450px]">
+            {/* Left/Top: Image */}
+            <div className="w-full md:w-1/2 bg-slate-50 relative h-[200px] md:h-full flex items-center justify-center">
+              <img
+                src={modalProductDetails?.images?.[0] || modalProductDetails?.image_url || "https://images.unsplash.com/photo-1549007994-cb92ca88806f?w=400&q=80"}
+                alt={modalProductDetails?.name || "Product"}
+                className="w-full h-full object-cover"
+              />
+              <button 
+                onClick={() => setSelectedProductId(null)}
+                className="absolute top-4 left-4 p-2 bg-white/80 hover:bg-white text-slate-800 rounded-full shadow-md md:hidden"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Right/Bottom: Description & Info */}
+            <div className="w-full md:w-1/2 p-6 flex flex-col h-[300px] md:h-full relative overflow-hidden bg-white">
+              <button 
+                onClick={() => setSelectedProductId(null)}
+                className="absolute top-4 right-4 p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-lg hidden md:block z-10"
+              >
+                <X className="w-5 h-5" />
+              </button>
+
+              {isProductModalLoading ? (
+                <div className="flex flex-col items-center justify-center h-full space-y-3">
+                  <RefreshCw className="w-8 h-8 animate-spin text-rose-500" />
+                  <span className="text-xs font-bold text-slate-400">Loading catalog specifications...</span>
+                </div>
+              ) : (
+                <div className="flex flex-col h-full overflow-hidden">
+                  {/* Scrollable details wrapper */}
+                  <div className="flex-1 overflow-y-auto pr-1 pb-4 space-y-4 scrollbar-thin">
+                    <div>
+                      <span className="text-[9px] font-black bg-rose-100 text-rose-600 px-2.5 py-1 rounded-full uppercase tracking-wider">
+                        {modalProductDetails?.category?.name || modalProductDetails?.category || "Exclusive Curation"}
+                      </span>
+                      <h3 className="font-extrabold text-slate-800 text-base md:text-lg leading-snug mt-2">
+                        {modalProductDetails?.name}
+                      </h3>
+                      <p className="text-lg font-black text-rose-600 mt-1">
+                        LKR {Number(modalProductDetails?.price?.amount || modalProductDetails?.price || 0).toLocaleString()}
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">Details & Curation</span>
+                      <p className="text-xs text-slate-600 leading-relaxed">
+                        {modalProductDetails?.description || "This exclusive catalog item is picked directly from Kapruka's premium collections. Verified for high-quality components, hand-delivered with care, and fully eligible for local gift-wrapping options."}
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      <span className="text-[10px] font-bold px-2.5 py-1 bg-emerald-50 text-emerald-600 rounded-lg border border-emerald-100 flex items-center gap-1">
+                        🚚 {modalProductDetails?.in_stock ? "Available for Same-Day Delivery" : "Ships in 2-3 days"}
+                      </span>
+                      {modalProductDetails?.stock_level === "low" && (
+                        <span className="text-[10px] font-bold px-2.5 py-1 bg-amber-50 text-amber-600 rounded-lg border border-amber-100 animate-pulse">
+                          ⚠️ Limited Stock
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Sticky Footer Button */}
+                  <div className="pt-4 border-t border-slate-100 flex gap-2 shrink-0">
+                    <button
+                      onClick={() => {
+                        addToBundle({
+                          id: modalProductDetails.id || modalProductDetails.product_id,
+                          name: modalProductDetails.name,
+                          price: modalProductDetails.price?.amount || modalProductDetails.price,
+                          image_url: modalProductDetails.images?.[0] || modalProductDetails.image_url,
+                          url: modalProductDetails.url || "#"
+                        });
+                        setSelectedProductId(null);
+                      }}
+                      className="flex-1 flex items-center justify-center gap-2 py-3 bg-gradient-to-r from-amber-500 to-rose-500 hover:from-amber-600 hover:to-rose-600 text-white font-black text-xs rounded-xl shadow-md transition-all active:scale-95 cursor-pointer"
+                    >
+                      <Plus className="w-4 h-4" /> Add to Hamper Package
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
