@@ -1,11 +1,12 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import { Sparkles, Trash2, Gift, CreditCard, ShoppingBag, X, Check, BrainCircuit } from "lucide-react";
+import { Sparkles, Trash2, Gift, CreditCard, ShoppingBag, X, Check, BrainCircuit, Activity } from "lucide-react";
 import ChatInput from "./ChatInput";
-import ChatMessage, { Message, Product, TrackingData } from "./ChatMessage";
+import ChatMessage, { Message, Product } from "./ChatMessage";
 import { createClient } from "@/lib/supabase/client";
 import { User } from "@supabase/supabase-js";
+import JudgePanel from "./JudgePanel";
 
 const getUniqueId = (prefix: string): string => `${prefix}-${Date.now()}`;
 
@@ -61,6 +62,16 @@ function getLoadingPhrase(text: string): string {
 }
 
 export default function ChatWindow() {
+    const [userTone, setUserTone] = useState<string>("neutral");
+    
+    // Fix for Supabase OAuth Redirects when the whitelist lacks a wildcard (*)
+    // If Supabase redirects to /?code=... instead of /auth/callback?code=...
+    useEffect(() => {
+        if (typeof window !== "undefined" && window.location.search.includes("code=")) {
+            window.location.href = `/auth/callback${window.location.search}`;
+        }
+    }, []);
+
     const [user, setUser] = useState<User | null>(null);
     const [isAuthLoading, setIsAuthLoading] = useState(true);
     const supabase = createClient();
@@ -85,10 +96,24 @@ export default function ChatWindow() {
     const [recipientName, setRecipientName] = useState("Amma");
     const [deliveryAddress, setDeliveryAddress] = useState("No 12, Flower Rd, Colombo 03");
     
-    // Debug mode
+    const [isJudgeMode, setIsJudgeMode] = useState(false);
+    const [selectedTraceData, setSelectedTraceData] = useState<any>(null);
     const [isDebugMode, setIsDebugMode] = useState(false);
     
     const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+    // Toggle Judge Mode with Ctrl+Shift+D
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'd') {
+                e.preventDefault();
+                setIsJudgeMode(prev => !prev);
+                if (isJudgeMode) setSelectedTraceData(null); // Clear selection on close
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [isJudgeMode]);
 
     // Auto-scroll to bottom of messages safely (prevents layout shift bugs)
     useEffect(() => {
@@ -305,23 +330,86 @@ export default function ChatWindow() {
                 }),
             });
 
-            const data = await response.json();
+            if (!response.body) throw new Error("No response body");
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
             
-            setIsTyping(false);
+            const aiMsgId = `kappy-${Date.now()}`;
             setMessages(prev => [
                 ...prev,
-                {
-                    id: `kappy-${Date.now()}`,
-                    role: "assistant",
-                    content: data.content,
-                    products: data.products,
-                    tracking: data.tracking,
-                    traceReport: data.traceReport
-                }
+                { id: aiMsgId, role: "assistant", content: "" }
             ]);
+            setIsTyping(false);
 
-            if (data.activeMemories && Array.isArray(data.activeMemories)) {
-                setActiveMemories(data.activeMemories);
+            let accumulatedText = "";
+            let customData: any = null;
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                
+                const chunk = decoder.decode(value, { stream: true });
+                const lines = chunk.split('\n').filter(Boolean);
+                
+                for (const line of lines) {
+                    if (line.startsWith('0:')) {
+                        try {
+                            const textPart = JSON.parse(line.substring(2));
+                            accumulatedText += textPart;
+                            setMessages(prev => prev.map(m => m.id === aiMsgId ? { ...m, content: accumulatedText } : m));
+                        } catch (e) {}
+                    } else if (line.startsWith('2:') || line.startsWith('8:') || line.startsWith('data:')) {
+                        try {
+                            const dataStr = line.startsWith('data:') ? line.substring(5) : line.substring(2);
+                            const parsed = JSON.parse(dataStr);
+                            if (Array.isArray(parsed) && parsed.length > 0) {
+                                customData = { ...customData, ...parsed[0] };
+                            } else if (parsed && typeof parsed === 'object') {
+                                customData = { ...customData, ...parsed };
+                            }
+                            // Update UI immediately with products
+                            if (customData) {
+                                setMessages(prev => prev.map(m => m.id === aiMsgId ? {
+                                    ...m,
+                                    products: customData.products || m.products,
+                                    tracking: customData.tracking || m.tracking,
+                                    traceReport: customData.traceReport || m.traceReport,
+                                    intelligenceTrace: customData.intelligenceTrace || m.intelligenceTrace,
+                                    judgeModeTrace: customData.judgeModeTrace || m.judgeModeTrace,
+                                    transparencyMessage: customData.transparencyMessage || m.transparencyMessage,
+                                    followUpSuggestions: customData.followUpSuggestions || m.followUpSuggestions
+                                } : m));
+                            }
+                        } catch (e) {}
+                    } else if (line.startsWith('{')) {
+                        try {
+                            const parsedData = JSON.parse(line);
+                            if (parsedData.role === "assistant") {
+                                accumulatedText = parsedData.content;
+                                customData = { ...customData, ...parsedData };
+                                setMessages(prev => prev.map(m => m.id === aiMsgId ? { ...m, content: accumulatedText } : m));
+                            }
+                        } catch (e) {}
+                    }
+                }
+            }
+
+            if (customData) {
+                setMessages(prev => prev.map(m => m.id === aiMsgId ? {
+                    ...m,
+                    products: customData.products,
+                    tracking: customData.tracking,
+                    traceReport: customData.traceReport || null,
+                    intelligenceTrace: customData.intelligenceTrace || null,
+                    judgeModeTrace: customData.judgeModeTrace || null,
+                    transparencyMessage: customData.transparencyMessage || null,
+                    followUpSuggestions: customData.followUpSuggestions || null
+                } : m));
+                
+                if (customData.activeMemories && Array.isArray(customData.activeMemories)) {
+                    setActiveMemories(customData.activeMemories);
+                }
             }
         } catch (error) {
             console.error(error);
@@ -422,6 +510,13 @@ export default function ChatWindow() {
                         </svg>
                         Sign in with Google
                     </button>
+                    
+                    <button
+                        onClick={() => setUser({ id: "guest-123", email: "guest@kapruka.com" } as User)}
+                        className="mt-4 w-full py-3.5 bg-transparent border border-white/20 text-white/70 font-medium rounded-xl hover:bg-white/5 hover:text-white transition-all active:scale-95"
+                    >
+                        Continue as Guest
+                    </button>
                 </div>
             </div>
         );
@@ -470,6 +565,21 @@ export default function ChatWindow() {
                             </div>
                         ))
                     )}
+                </div>
+
+                {/* Judge Mode Toggle */}
+                <div className="p-4 border-t border-white/5 bg-slate-900/50">
+                    <button
+                        onClick={() => setIsJudgeMode(!isJudgeMode)}
+                        className={`w-full py-2.5 rounded-xl border flex items-center justify-center gap-2 text-sm font-bold transition-all active:scale-95 ${
+                            isJudgeMode 
+                                ? "bg-amber-500/20 text-amber-400 border-amber-500/50 shadow-[0_0_15px_rgba(245,158,11,0.2)]" 
+                                : "bg-white/5 text-slate-400 border-white/10 hover:bg-white/10 hover:text-white"
+                        }`}
+                    >
+                        <Activity className="w-4 h-4" />
+                        {isJudgeMode ? "Judge Mode Active" : "Enable Judge Mode"}
+                    </button>
                 </div>
             </div>
 
@@ -563,16 +673,31 @@ export default function ChatWindow() {
                 {/* Chat Message Box Container */}
                 <div 
                     ref={scrollContainerRef}
-                    className="flex-1 overflow-y-auto px-6 py-6 space-y-4 scrollbar-thin"
+                    className="flex-1 overflow-y-auto px-6 py-6 space-y-4 scrollbar-thin relative"
                 >
-                    
-                    {messages.map((message) => (
-                        <ChatMessage
-                            key={message.id}
-                            message={message}
-                            isDebugMode={isDebugMode}
-                            onAddToBundle={addToBundle}
-                        />
+                    {messages.map((msg, i) => (
+                            <div 
+                                key={msg.id} 
+                                className={`transition-all duration-300 ${isJudgeMode ? 'cursor-pointer hover:opacity-80 hover:bg-white/5 rounded-2xl p-2 -mx-2' : ''}`}
+                                onClick={() => {
+                                    if (isJudgeMode) {
+                                        setSelectedTraceData({
+                                            traceReport: msg.traceReport,
+                                            intelligenceTrace: msg.judgeModeTrace,
+                                            message: msg.content
+                                        });
+                                    }
+                                }}
+                            >
+                                <ChatMessage 
+                                    message={msg} 
+                                    isDebugMode={isDebugMode}
+                                    userId={user?.id}
+                                    sessionId={activeConversationId}
+                                    onAddToBundle={addToBundle}
+                                    onFollowUpClick={(text) => handleSendMessage(text)}
+                                />
+                            </div>
                     ))}
 
                     {/* Simulated assistant typing indicator */}
@@ -829,6 +954,14 @@ export default function ChatWindow() {
                 </div>
             )}
 
+            {/* Right Sliding Panel for Judge Mode */}
+            {isJudgeMode && (
+                <JudgePanel 
+                    data={selectedTraceData} 
+                    onClose={() => setIsJudgeMode(false)} 
+                />
+            )}
         </div>
     );
 }
+

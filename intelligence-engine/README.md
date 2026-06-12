@@ -1,0 +1,15 @@
+01-kappy-intelligence-engine-philosophy.md
+02-intent-understanding-engine.md
+03-situation-analysis-engine.md
+04-missing-information-detector.md
+05-psychology-engine.md
+06-relationship-intelligence-engine.md
+07-shopping-strategy-selector.md
+08-recommendation-planner.md
+09-decision-support-engine.md
+10-confidence-building-engine.md
+11-learning-engine.md
+12-failure-modes-and-anti-patterns.md
+13-real-world-scenarios-and-examples.md
+14-implementation-blueprint.md
+15-master-intelligence-engine-prompt.md

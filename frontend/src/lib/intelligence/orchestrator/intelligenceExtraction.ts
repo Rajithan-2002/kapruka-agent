@@ -1,0 +1,204 @@
+import OpenAI from 'openai';
+import { ExtractionResult } from '../types/intelligence.types';
+import { IntelligenceTracer } from '../observability/tracer';
+
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
+
+const EXTRACTION_SCHEMA = {
+  name: "extract_intelligence_context",
+  description: "Extracts deep semantic understanding from a user's commerce request.",
+  parameters: {
+    type: "object",
+    properties: {
+      intent: {
+        type: "string",
+        enum: ["SHOPPING", "GIFTING", "REORDER", "BROWSING", "DELIVERY", "TRACKING", "COMPLAINT", "SMALL_TALK", "PREFERENCE_CORRECTION", "PRICE_REFINEMENT", "UNKNOWN"],
+        description: "The primary intent of the user."
+      },
+      intentConfidence: {
+        type: "number",
+        description: "Confidence in the intent classification (0-1)."
+      },
+      situation: {
+        type: "object",
+        properties: {
+          recipient: { type: "string", description: "Who is this for? e.g., 'father', 'wife', 'friend', 'self'. Output 'UNKNOWN' if not specified." },
+          recipient_type: { type: "string", enum: ["FAMILY", "FRIEND", "ROMANTIC", "COLLEAGUE", "ACQUAINTANCE", "SELF", "UNKNOWN"] },
+          occasion: { type: "string", description: "Why are they buying this? e.g., 'birthday', 'anniversary', 'apology'. Output 'UNKNOWN' if not specified." },
+          urgency: { type: "string", enum: ["LOW", "MEDIUM", "HIGH", "IMMEDIATE"] },
+          budget: {
+            type: "object",
+            properties: {
+              min: { type: "number" },
+              max: { type: "number" },
+              currency: { type: "string", default: "LKR" },
+              is_flexible: { type: "boolean", default: true }
+            },
+            required: ["currency", "is_flexible"]
+          },
+          location: { type: "string", description: "Target delivery location if mentioned." },
+          delivery_requirements: { type: "string" }
+        },
+        required: ["recipient", "recipient_type", "occasion", "urgency", "budget"]
+      },
+      psychology: {
+        type: "object",
+        properties: {
+          primaryTrigger: {
+            type: "string",
+            enum: ["APPRECIATION", "LOVE", "APOLOGY", "GUILT", "OBLIGATION", "CELEBRATION", "SYMPATHY", "UNKNOWN"]
+          },
+          secondaryTrigger: {
+            type: "string",
+            enum: ["APPRECIATION", "LOVE", "APOLOGY", "GUILT", "OBLIGATION", "CELEBRATION", "SYMPATHY", "UNKNOWN"]
+          },
+          emotionalIntensity: {
+            type: "number",
+            description: "Scale 1-10 of how emotional this purchase is (e.g., funeral or big apology is 10, casual self-buy is 1)."
+          }
+        },
+        required: ["primaryTrigger", "emotionalIntensity"]
+      },
+      product_type: {
+        type: "string",
+        description: "The specific product the user wants to buy (e.g., 'cream cracker biscuits', 'whiskey', 'flower bouquet'). MUST be translated to English. MUST fix spelling mistakes (e.g., 'biscuts' -> 'biscuits'). If none specified, output 'UNKNOWN'."
+      },
+      mapped_category: {
+        type: "string",
+        enum: ["GROCERY", "CAKES", "TOYS", "FASHION", "FLOWERS", "SWEETS", "FRUITS", "ELECTRONICS", "GIFTS", "STATIONERY", "UNKNOWN"],
+        description: "Map the user's natural query to an official Kapruka root category. If unsure, output 'UNKNOWN'."
+      },
+      interaction_mode: {
+        type: "string",
+        enum: ["DISCOVERY", "RECOMMENDATION", "REFINEMENT"],
+        description: "DISCOVERY: user wants to browse options/examples. RECOMMENDATION: user needs help choosing a single best item. REFINEMENT: filtering an existing list."
+      },
+      action: {
+        type: "string",
+        enum: ["SEARCH", "SHOW_MORE", "RECALL_PREVIOUS_RESULTS"],
+        description: "Use SEARCH for new requests. Use SHOW_MORE to see next page. Use RECALL_PREVIOUS_RESULTS for 'where is the list', 'show me those again'."
+      },
+      search_sufficiency_score: {
+        type: "number",
+        description: "0.0 to 1.0. How sufficient is the current information to perform a search? 0.9 for 'juice under 500'. 0.1 for 'I need something nice'."
+      },
+      recommendation_mode: {
+        type: "string",
+        enum: ["FAST", "PRECISION"],
+        description: "Use PRECISION if the user says: 'Can you help me choose?', 'What is the best option?', 'I don't know what to buy.', 'Recommend something meaningful'. Otherwise, use FAST."
+      },
+      preference_corrections: {
+        type: "array",
+        description: "List of user preference corrections, e.g. 'No mugs', 'Avoid flowers', 'Dad hates coffee', 'Not a huge fan of books'. Extract these when the user is refining their preferences for the current recommendation pool.",
+        items: {
+          type: "object",
+          properties: {
+            type: { type: "string", enum: ["CATEGORY", "PRODUCT_TYPE", "RECIPIENT_PREFERENCE", "STYLE"] },
+            target: { type: "string", description: "The specific item/category being referenced, e.g. 'mugs', 'coffee', 'books'" },
+            negative: { type: "boolean", description: "True if they dislike or want to avoid it" },
+            strength: { type: "string", enum: ["SOFT", "HARD"], description: "HARD for 'no mugs', 'remove books'. SOFT for 'maybe not mugs', 'prefer something else'." },
+            recipient: { type: "string", description: "Who this preference belongs to, if specified (e.g. 'mother', 'dad')" }
+          },
+          required: ["type", "target", "negative", "strength"]
+        }
+      },
+      price_refinement: {
+        type: "object",
+        description: "Populate if user wants to filter or sort the current products by price (e.g., 'under 5000', 'around 3000', 'budget friendly', 'luxury', 'between 3k and 8k').",
+        properties: {
+          sort_order: { type: "string", enum: ["ASC", "DESC", "CHEAPER", "PREMIUM"], description: "Use CHEAPER for 'budget friendly/affordable' (relevance-aware), ASC for 'lowest first' (absolute), PREMIUM for 'luxury', DESC for 'highest first'." },
+          min_price: { type: "number" },
+          max_price: { type: "number" },
+          target_price: { type: "number", description: "Use for 'around 5000'." },
+          price_band: { type: "string", enum: ["BUDGET", "MID", "PREMIUM", "LUXURY"] }
+        }
+      },
+      missingInfo: {
+        type: "object",
+        properties: {
+          isMissingCriticalInfo: {
+            type: "boolean",
+            description: "True if Minimum Viable Context (MVC) is not met. MVC Rules: For Gifting, require Recipient OR Occasion. For Food/Shopping, require Product Type. For Reorder, require Reorder Intent. If MVC is met, this is false."
+          },
+          missingFields: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                field: { type: "string" },
+                priority: { type: "number", description: "1 is highest priority" }
+              },
+              required: ["field", "priority"]
+            },
+            description: "List of missing fields ranked by priority to ask."
+          },
+          suggestedQuestion: {
+            type: "string",
+            description: "A natural, friendly question to ask the user to get the HIGHEST priority missing information."
+          }
+        },
+        required: ["isMissingCriticalInfo", "missingFields"]
+      }
+    },
+    required: ["intent", "intentConfidence", "situation", "psychology", "product_type", "mapped_category", "interaction_mode", "action", "search_sufficiency_score", "recommendation_mode", "missingInfo"]
+  }
+};
+
+export async function runIntelligenceExtraction(
+  userMessage: string,
+  chatHistory: { role: string; content: string }[],
+  tracer: IntelligenceTracer
+): Promise<ExtractionResult> {
+  const trace = tracer.startTrace('IntelligenceExtraction', { userMessage });
+
+  try {
+    const messages: any[] = [
+      {
+        role: "system",
+        content: `You are the Kapruka Intelligence Engine. Your job is to deeply understand the user's commerce request.
+You must extract the Intent, Situation, Psychology, and any Missing Information.
+Always analyze if the user is gifting or buying for themselves.
+If the user corrects or refines a previous recommendation (e.g., "No mugs", "My dad hates coffee", "Avoid flowers"), set intent to PREFERENCE_CORRECTION and populate preference_corrections array.
+If the user wants to filter or sort by price (e.g., "Under 5000", "Around 3000", "Show budget gifts", "Sort low to high"):
+- If they are filtering an EXISTING pool of recommendations, set intent to PRICE_REFINEMENT.
+- If this is a FRESH search (e.g., "list some juice items under 500", "I need a phone around 50000"), the intent MUST be SHOPPING or GIFTING, but you should STILL populate the price_refinement object.
+CRITICAL: Always map the request to the most appropriate 'mapped_category'. Example: 'healthy snacks' -> 'GROCERY'. 'birthday cake' -> 'CAKES'.
+Minimum Viable Context (MVC) Rules:
+- Gifting: MVC is met if Recipient OR Occasion is present.
+- Food/Grocery/Shopping: MVC is met if Product Type is present.
+- Reorder: MVC is met if Reorder Intent is present.
+- Preference Correction: MVC is met.
+- Price Refinement: MVC is met.
+If MVC is not met, mark isMissingCriticalInfo as true.
+Do NOT hallucinate information. If something is unknown, mark it as UNKNOWN.
+CRITICAL RULE: "Earn the right to ask questions". Do NOT ask for Recipient or Occasion if the user just asks for "juice" or a simple product. Only ask questions if they materially improve the recommendation.`
+      },
+      ...chatHistory.map(msg => ({ role: msg.role, content: msg.content || "" })),
+      { role: "user", content: userMessage || "" }
+    ];
+
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages,
+      tools: [{ type: "function", function: EXTRACTION_SCHEMA }],
+      tool_choice: { type: "function", function: { name: "extract_intelligence_context" } },
+      temperature: 0.1,
+    });
+
+    const toolCall = response.choices[0].message.tool_calls?.[0];
+    if (!toolCall) {
+      throw new Error("Failed to extract intelligence context");
+    }
+
+    const extractedData = JSON.parse(toolCall.function.arguments) as ExtractionResult;
+    
+    trace.end(extractedData, extractedData.intentConfidence || 1.0, "Successfully extracted context via LLM");
+    return extractedData;
+    
+  } catch (error: any) {
+    trace.end({ error: error.message }, 0, "Extraction failed");
+    throw error;
+  }
+}

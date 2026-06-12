@@ -39,16 +39,25 @@ export interface Message {
     tracking?: TrackingData;
     isCheckout?: boolean;
     traceReport?: any;
+    intelligenceTrace?: any[];
+    judgeModeTrace?: any;
+    decisionSupport?: any;
+    reassurances?: string[];
+    transparencyMessage?: string;
+    followUpSuggestions?: string[];
 }
 
 interface ChatMessageProps {
     message: Message;
     isDebugMode?: boolean;
+    userId?: string;
+    sessionId?: string | null;
     onAddToBundle?: (product: Product) => void;
+    onFollowUpClick?: (text: string) => void;
 }
 
-export default function ChatMessage({ message, isDebugMode = false, onAddToBundle }: ChatMessageProps) {
-    const { role, content, isLoading, loadingText, products, tracking, isCheckout, traceReport } = message;
+export default function ChatMessage({ message, isDebugMode = false, userId, sessionId, onAddToBundle, onFollowUpClick }: ChatMessageProps) {
+    const { role, content, isLoading, loadingText, products, tracking, isCheckout, traceReport, intelligenceTrace, decisionSupport, reassurances, transparencyMessage, followUpSuggestions } = message;
     const isAssistant = role === "assistant";
 
     // Track which products have expanded details inline
@@ -59,6 +68,36 @@ export default function ChatMessage({ message, isDebugMode = false, onAddToBundl
             ...prev,
             [productId]: !prev[productId]
         }));
+    };
+
+    const [feedbackSubmitted, setFeedbackSubmitted] = useState<Record<string, "RELEVANT" | "NOT_RELEVANT">>({});
+
+    const submitFeedback = async (product: Product, type: "RELEVANT" | "NOT_RELEVANT") => {
+        try {
+            setFeedbackSubmitted(prev => ({ ...prev, [product.id]: type }));
+            const safeTrace = Array.isArray(intelligenceTrace) ? intelligenceTrace : [];
+            const extractionTrace = safeTrace.find((t: any) => t.engine === "IntelligenceExtraction")?.outputs || {};
+            const strategyTrace = safeTrace.find((t: any) => t.engine === "StrategySelector")?.outputs || {};
+            
+            await fetch("/api/feedback", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    productId: product.id,
+                    feedbackType: type,
+                    userId: userId || "guest",
+                    sessionId: sessionId || "unknown",
+                    context: {
+                        recipient: extractionTrace.situation?.recipient || "unknown",
+                        occasion: extractionTrace.situation?.occasion || "unknown",
+                        category: product.category || "unknown",
+                        strategy: strategyTrace.strategy || "unknown"
+                    }
+                })
+            });
+        } catch (e) {
+            console.error(e);
+        }
     };
 
     return (
@@ -101,11 +140,60 @@ export default function ChatMessage({ message, isDebugMode = false, onAddToBundl
                 ) : (
                     <p className="text-sm md:text-base leading-relaxed whitespace-pre-line">{content}</p>
                 )}
+
+                {/* Kappy Reassurances (Confidence Builder) */}
+                {!isLoading && reassurances && reassurances.length > 0 && (
+                    <div className="mt-3 pt-2 border-t border-white/10">
+                        {reassurances.map((r, i) => (
+                            <p key={i} className="text-[11px] text-amber-300 italic flex items-center gap-1.5">
+                                <span>💝</span> {r}
+                            </p>
+                        ))}
+                    </div>
+                )}
             </div>
+
+            {/* Kappy Decision Support Top Pick Highlight */}
+            {!isLoading && decisionSupport?.topPick && (
+                 <div className="w-full max-w-lg mt-3 p-3 bg-gradient-to-r from-amber-500/10 to-transparent border border-amber-500/20 rounded-xl animate-slide-down">
+                     <p className="text-xs text-amber-100 flex items-start gap-2">
+                         <span className="text-amber-400 mt-0.5"><Star className="w-4 h-4 fill-current"/></span>
+                         <span>{decisionSupport.reasoning} <br/><span className="opacity-70 mt-1 block">{decisionSupport.tradeoffs}</span></span>
+                     </p>
+                 </div>
+            )}
 
             {/* Product Recommendations Horizontal Carousel (Mobile First) */}
             {isAssistant && products && products.length > 0 && (
-                <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 md:gap-4 w-full mt-4 pb-4 animate-fade-in">
+                <div className="w-full mt-4 pb-4 animate-fade-in">
+                    
+                    {/* Transparency Message & Follow Up Chips */}
+                    {(transparencyMessage || followUpSuggestions) && (
+                        <div className="mb-4 space-y-3">
+                            {transparencyMessage && (
+                                <div className="text-[13px] text-slate-300 bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 flex items-center gap-2">
+                                    <span className="text-sky-400">🔍</span>
+                                    <span>{transparencyMessage}</span>
+                                </div>
+                            )}
+                            
+                            {followUpSuggestions && followUpSuggestions.length > 0 && (
+                                <div className="flex flex-wrap gap-2">
+                                    {followUpSuggestions.map((suggestion, idx) => (
+                                        <button
+                                            key={idx}
+                                            onClick={() => onFollowUpClick && onFollowUpClick(suggestion)}
+                                            className="text-xs font-semibold px-3 py-1.5 bg-slate-900 border border-white/10 hover:border-amber-500/50 hover:bg-amber-500/10 text-slate-300 hover:text-amber-400 rounded-full transition-all"
+                                        >
+                                            {suggestion}
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 md:gap-4 w-full">
                     {products.map((product, index) => {
                         const isExpanded = !!expandedProducts[product.id];
                         return (
@@ -191,7 +279,30 @@ export default function ChatMessage({ message, isDebugMode = false, onAddToBundl
                                                 <h5 className="font-bold text-amber-400 mb-1 flex items-center gap-1">
                                                     <span>💡</span> Why Kappy Recommends This:
                                                 </h5>
-                                                <p className="leading-relaxed mb-2">{product.reason || "Great quality product matching your requirements."}</p>
+                                                <p className="leading-relaxed mb-3">{product.reason || "Great quality product matching your requirements."}</p>
+                                                
+                                                {/* COMMUNITY FEEDBACK BUTTONS */}
+                                                {!feedbackSubmitted[product.id] ? (
+                                                    <div className="flex items-center gap-2 mb-3 mt-1 bg-slate-950/30 p-2 rounded-lg border border-white/5">
+                                                        <span className="text-[10px] text-slate-400 mr-1">Relevant?</span>
+                                                        <button 
+                                                            className="flex-1 px-2 py-1 bg-white/5 hover:bg-emerald-500/20 text-emerald-400 border border-white/10 rounded transition-colors text-[10px] font-bold"
+                                                            onClick={() => submitFeedback(product, "RELEVANT")}
+                                                        >👍 Yes</button>
+                                                        <button 
+                                                            className="flex-1 px-2 py-1 bg-white/5 hover:bg-rose-500/20 text-rose-400 border border-white/10 rounded transition-colors text-[10px] font-bold"
+                                                            onClick={() => submitFeedback(product, "NOT_RELEVANT")}
+                                                        >👎 No</button>
+                                                    </div>
+                                                ) : (
+                                                    <div className="flex items-center justify-center gap-2 mb-3 mt-1 bg-slate-950/50 p-2 rounded-lg border border-white/5">
+                                                        <span className="text-[10px] text-emerald-400 font-bold flex items-center gap-1">
+                                                            <CheckCircle2 className="w-3 h-3" />
+                                                            Feedback saved. Kappy will learn from this.
+                                                        </span>
+                                                    </div>
+                                                )}
+
                                                 <div className="flex items-center justify-between text-[10px] text-slate-400 pt-2 border-t border-white/5">
                                                     <span>Status: {product.inStock ? "✅ In Stock" : "❌ Out of Stock"}</span>
                                                     <a
@@ -214,6 +325,7 @@ export default function ChatMessage({ message, isDebugMode = false, onAddToBundl
                         );
                     })}
                 </div>
+            </div>
             )}
 
             {/* Tracking Card Timeline (If Available) */}
@@ -275,72 +387,76 @@ export default function ChatMessage({ message, isDebugMode = false, onAddToBundl
                 </div>
             )}
 
-            {/* Debug UI Trace Report */}
-            {isDebugMode && traceReport && (
-                <div className="mt-4 p-4 rounded-xl bg-slate-950 border border-purple-500/30 overflow-hidden text-xs font-mono text-purple-300 shadow-inner w-full max-w-2xl mx-auto md:mx-0">
-                    <div className="flex items-center gap-2 mb-2 font-bold text-purple-400 border-b border-purple-500/20 pb-2">
-                        <span>🔍 RECOMMENDATION TRACE DIAGNOSTIC</span>
-                        <div className="ml-auto flex items-center gap-2">
-                            {traceReport.context_override && (
-                                <span className="bg-rose-500/20 text-rose-400 px-2 py-0.5 rounded text-[10px] animate-pulse">
-                                    CONTEXT OVERRIDE: REFRESHED
-                                </span>
-                            )}
-                            <span className="bg-purple-500/20 px-2 py-0.5 rounded text-[10px]">
-                                {traceReport.mode?.toUpperCase() || 'UNKNOWN'} MODE
-                            </span>
+            {/* Legacy Developer Mode Trace View */}
+            {isDebugMode && message.traceReport && (
+                <div className="mt-4 p-4 rounded-xl bg-[#0B0D17] border border-purple-500/30 overflow-hidden text-[10px] font-mono relative">
+                    {/* Header */}
+                    <div className="flex items-center justify-between mb-4 border-b border-purple-500/20 pb-3">
+                        <div className="flex items-center gap-2 text-purple-400 font-bold uppercase tracking-wider">
+                            <span>🔍</span> RECOMMENDATION TRACE DIAGNOSTIC
+                        </div>
+                        <div className="px-2 py-1 bg-purple-900/30 text-purple-400 rounded uppercase font-bold text-[9px]">
+                            {message.traceReport.mode || "RECOMMENDATION MODE"}
                         </div>
                     </div>
-                    {traceReport.context_override && (
-                        <div className="mb-3 px-3 py-2 bg-rose-500/10 border border-rose-500/20 rounded flex justify-between items-center text-[10px] text-rose-300">
-                            <div><strong>Prev Budget:</strong> Rs. {traceReport.previous_budget || 'None'}</div>
-                            <div>→</div>
-                            <div><strong>New Budget:</strong> Rs. {traceReport.current_budget || 'None'}</div>
-                            <div className="px-2 py-0.5 bg-rose-500/20 rounded">Cache Wiped</div>
+
+                    {/* Metrics Grid */}
+                    <div className="grid grid-cols-4 gap-4 mb-4 text-slate-300 border-b border-purple-500/20 pb-4">
+                        <div className="col-span-1 border-r border-white/5 pr-2 whitespace-normal break-words">
+                            <span className="text-slate-500">Query: </span> 
+                            <span className="text-white">{message.traceReport.query}</span>
                         </div>
-                    )}
-                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-x-4 gap-y-1 mb-4">
-                        <div><span className="opacity-50">Query:</span> {traceReport.query}</div>
-                        <div><span className="opacity-50">Trace ID:</span> {traceReport.trace_id?.split('-')[0]}</div>
-                        <div className="text-emerald-400"><span className="opacity-50 text-purple-300">Retrieved:</span> {traceReport.raw_product_count}</div>
-                        <div className="text-orange-400"><span className="opacity-50 text-purple-300">Deduped:</span> {traceReport.deduplicated_count || 0}</div>
-                        <div className="text-rose-400"><span className="opacity-50 text-purple-300">Filtered:</span> {traceReport.filtered_count}</div>
-                        <div className="text-blue-400"><span className="opacity-50 text-purple-300">Ranked:</span> {traceReport.ranked_count}</div>
-                        <div className="text-amber-400"><span className="opacity-50 text-purple-300">Displayed:</span> {traceReport.displayed_count}</div>
-                        <div className="text-indigo-400"><span className="opacity-50 text-purple-300">Cached:</span> {traceReport.cache_remaining || 0}</div>
+                        <div className="col-span-1 flex flex-col gap-2 pl-2">
+                            <div><span className="text-slate-500">Trace ID: </span> <span className="text-blue-300">{message.traceReport.trace_id}</span></div>
+                            <div><span className="text-slate-500">Ranked: </span> <span className="text-blue-400">{message.traceReport.ranked_count}</span></div>
+                        </div>
+                        <div className="col-span-1 flex flex-col gap-2">
+                            <div><span className="text-slate-500">Retrieved: </span> <span className="text-emerald-400">{message.traceReport.raw_product_count}</span></div>
+                            <div><span className="text-slate-500">Displayed: </span> <span className="text-amber-400">{message.traceReport.displayed_count}</span></div>
+                        </div>
+                        <div className="col-span-1 flex flex-col gap-2">
+                            <div><span className="text-slate-500">Deduped: </span> <span className="text-amber-500">{message.traceReport.deduplicated_count}</span></div>
+                            <div><span className="text-slate-500">Filtered: </span> <span className="text-rose-400">{message.traceReport.filtered_count}</span></div>
+                            <div><span className="text-slate-500">Semantic Drop: </span> <span className="text-orange-400">{message.traceReport.semantic_removed_count || 0}</span></div>
+                            <div><span className="text-slate-500">Cached: </span> <span className="text-purple-400">{message.traceReport.cache_remaining}</span></div>
+                        </div>
                     </div>
-                    
-                    <div className="border border-purple-500/20 rounded overflow-x-auto">
-                        <table className="w-full text-left border-collapse">
-                            <thead>
-                                <tr className="bg-purple-900/30 border-b border-purple-500/20">
-                                    <th className="p-2 font-semibold">Product</th>
-                                    <th className="p-2 font-semibold">Stage</th>
-                                    <th className="p-2 font-semibold">Status</th>
-                                    <th className="p-2 font-semibold">Reason</th>
-                                    <th className="p-2 font-semibold text-right">Score</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {traceReport.trace_data?.map((log: any, i: number) => (
-                                    <tr key={i} className={`border-b border-purple-500/10 hover:bg-purple-900/20 ${log.status === 'FAILED' ? 'opacity-60' : ''}`}>
-                                        <td className="p-2 truncate max-w-[150px]">{log.productName}</td>
-                                        <td className="p-2 text-[10px]">{log.stage}</td>
-                                        <td className="p-2">
-                                            <span className={`px-1.5 py-0.5 rounded ${log.status === 'PASSED' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'}`}>
-                                                {log.status}
-                                            </span>
-                                            {log.isHighlighted && <span className="ml-1 text-amber-400">★</span>}
-                                        </td>
-                                        <td className="p-2 text-[10px] max-w-[150px] truncate" title={log.reason}>{log.reason || '-'}</td>
-                                        <td className="p-2 text-right">{log.score || '-'}</td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
+
+                    {/* Table Header */}
+                    <div className="grid grid-cols-12 gap-2 text-purple-300 font-bold uppercase pb-2 border-b border-white/10">
+                        <div className="col-span-3">Product</div>
+                        <div className="col-span-3">Stage</div>
+                        <div className="col-span-2">Status</div>
+                        <div className="col-span-3">Reason</div>
+                        <div className="col-span-1 text-right">Score</div>
+                    </div>
+
+                    {/* Table Rows */}
+                    <div className="flex flex-col">
+                        {message.traceReport.trace_data?.map((prod: any, idx: number) => {
+                            const isFailed = prod.status === "rejected";
+                            const stageStr = isFailed && prod.reasons?.[0]?.includes("Price") ? "Budget Filter" : "Scoring Engine V2";
+                            const scoreStr = prod.score && prod.score > 0 ? prod.score.toFixed(2) : "-";
+
+                            return (
+                                <div key={idx} className="grid grid-cols-12 gap-2 py-2 border-b border-white/5 items-center text-slate-300 hover:bg-white/5 transition-colors">
+                                    <div className="col-span-3 truncate pr-2" title={prod.productName}>{prod.productName}</div>
+                                    <div className="col-span-3 text-slate-400">{stageStr}</div>
+                                    <div className="col-span-2 flex items-center gap-1">
+                                        <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold ${isFailed ? "bg-rose-950/50 text-rose-500" : "bg-emerald-950/50 text-emerald-500"}`}>
+                                            {isFailed ? "FAILED" : "PASSED"}
+                                        </span>
+                                        {prod.isHighlighted && <span className="text-amber-500">⭐</span>}
+                                    </div>
+                                    <div className="col-span-3 truncate text-slate-400 text-[9px]" title={prod.reasons?.[0] || "-"}>{prod.reasons?.[0] || "-"}</div>
+                                    <div className="col-span-1 text-right text-slate-200">{scoreStr}</div>
+                                </div>
+                            );
+                        })}
                     </div>
                 </div>
             )}
+
         </div>
     );
 }

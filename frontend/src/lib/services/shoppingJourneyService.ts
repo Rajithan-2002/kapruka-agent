@@ -109,3 +109,55 @@ export async function updateJourneyStages(
         .eq("user_id", userId)
         .eq("session_id", sessionId);
 }
+
+export async function getJourneySnapshot(sessionId: string): Promise<string | null> {
+    if (!useCloud || !supabase) return null;
+    
+    const { data, error } = await supabase
+        .from('shopping_journey')
+        .select('journey_state')
+        .eq('session_id', sessionId)
+        .maybeSingle();
+        
+    if (error || !data || !data.journey_state) return null;
+    return (data.journey_state as any).journeyState || null;
+}
+
+export async function saveJourneySnapshot(sessionId: string, state: string): Promise<void> {
+    if (!useCloud || !supabase) return;
+
+    const { data } = await supabase
+        .from('shopping_journey')
+        .select('journey_state')
+        .eq('session_id', sessionId)
+        .maybeSingle();
+
+    const existingSnapshot = data?.journey_state || {
+        sessionId,
+        journeyState: "IDLE",
+        activeBundle: [],
+        recommendedProducts: [],
+        lastUpdated: new Date().toISOString()
+    };
+
+    const updatedSnapshot = {
+        ...existingSnapshot,
+        journeyState: state,
+        lastUpdated: new Date().toISOString()
+    };
+
+    const { error } = await supabase
+        .from('shopping_journey')
+        .upsert({
+            id: `jou-${sessionId}`,
+            session_id:     sessionId,
+            user_id:        "00000000-0000-0000-0000-000000000000",
+            journey_state:  updatedSnapshot,
+            updated_at:     new Date().toISOString()
+        }, { onConflict: 'session_id' });
+        
+    if (error) {
+        console.error('[JourneyService] Save failed:', error.message);
+        throw error;
+    }
+}

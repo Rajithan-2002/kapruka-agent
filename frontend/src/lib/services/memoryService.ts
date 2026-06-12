@@ -10,11 +10,19 @@ const supabase = useCloud ? createClient(supabaseUrl, supabaseKey) : null;
 export interface RankedPreference extends Preference {
     importance_score?: number;
     last_used_at?: string;
+    source?: "user" | "system" | "purchase" | "llm";
+    memoryOrigin?: "USER_EXPLICIT" | "USER_IMPLICIT" | "LLM_INFERRED" | "PURCHASE_BEHAVIOR" | "SYSTEM_GENERATED";
+    verificationStatus?: "VERIFIED" | "INFERRED" | "STALE" | "VERIFY_BEFORE_USE";
+    lastConfirmedAt?: string | null;
 }
 
 export interface RankedMemory extends ConversationMemory {
     importance_score?: number;
     last_used_at?: string;
+    source?: "user" | "system" | "purchase" | "llm";
+    memoryOrigin?: "USER_EXPLICIT" | "USER_IMPLICIT" | "LLM_INFERRED" | "PURCHASE_BEHAVIOR" | "SYSTEM_GENERATED";
+    verificationStatus?: "VERIFIED" | "INFERRED" | "STALE" | "VERIFY_BEFORE_USE";
+    lastConfirmedAt?: string | null;
 }
 
 export async function getRelationships(userId: string): Promise<Relationship[]> {
@@ -39,6 +47,37 @@ export async function getRelationships(userId: string): Promise<Relationship[]> 
     }));
 }
 
+function mapMemoryRow(row: Record<string, any>): RankedMemory {
+    return {
+        id: row.id,
+        category: row.category,
+        key: row.key,
+        value: row.value,
+        timestamp: row.timestamp || row.created_at,
+        importance_score: row.importance_score,
+        last_used_at: row.last_used_at,
+        source: row.source,
+        memoryOrigin: row.memory_origin,
+        verificationStatus: row.verification_status,
+        lastConfirmedAt: row.last_confirmed_at
+    };
+}
+
+function mapPreferenceRow(row: Record<string, any>): RankedPreference {
+    return {
+        id: row.id,
+        relationship_id: row.relationship_id,
+        interest: row.interest,
+        confidence_score: row.confidence_score,
+        importance_score: row.importance_score,
+        last_used_at: row.last_used_at,
+        source: row.source,
+        memoryOrigin: row.memory_origin,
+        verificationStatus: row.verification_status,
+        lastConfirmedAt: row.last_confirmed_at
+    };
+}
+
 export async function getPreferences(userId: string): Promise<RankedPreference[]> {
     if (!useCloud || !supabase) return [];
     
@@ -57,10 +96,10 @@ export async function getPreferences(userId: string): Promise<RankedPreference[]
             .order("confidence_score", { ascending: false });
             
         if (fb.error) return [];
-        return fb.data as RankedPreference[];
+        return (fb.data || []).map(mapPreferenceRow);
     }
     
-    return data as RankedPreference[];
+    return (data || []).map(mapPreferenceRow);
 }
 
 export async function getMemories(userId: string): Promise<RankedMemory[]> {
@@ -81,10 +120,10 @@ export async function getMemories(userId: string): Promise<RankedMemory[]> {
             .order("timestamp", { ascending: false });
             
         if (fb.error) return [];
-        return fb.data as RankedMemory[];
+        return (fb.data || []).map(mapMemoryRow);
     }
     
-    return data as RankedMemory[];
+    return (data || []).map(mapMemoryRow);
 }
 
 // Write Operations migrated from monolithic db.ts
@@ -129,7 +168,10 @@ export async function addPreference(userId: string, relationshipId: string | und
         relationship_id: relationshipId,
         interest,
         confidence_score: 1.0,
-        importance_score: 1
+        importance_score: 1,
+        source: "llm",
+        memory_origin: "LLM_INFERRED",
+        verification_status: "INFERRED"
     };
 
     const { error } = await supabase.from("preferences").insert(insertData);
@@ -160,7 +202,10 @@ export async function addMemory(userId: string, category: string, key: string, v
         category,
         key,
         value,
-        importance_score: 1
+        importance_score: 1,
+        source: "llm",
+        memory_origin: "LLM_INFERRED",
+        verification_status: "INFERRED"
     };
 
     const { error } = await supabase.from("memories").insert(insertData);

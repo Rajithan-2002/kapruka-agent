@@ -22,12 +22,21 @@ export async function GET(
             let products: any[] = [];
             let tracking: any = null;
 
+            let traceReport: any = null;
+            let intelligenceTrace: any = null;
+
             if (m.metadata) {
                 if (m.metadata.products_list) {
                     products = m.metadata.products_list as any[];
                 }
                 if (m.metadata.tracking_data) {
                     tracking = m.metadata.tracking_data;
+                }
+                if (m.metadata.traceReport) {
+                    traceReport = m.metadata.traceReport;
+                }
+                if (m.metadata.intelligenceTrace) {
+                    intelligenceTrace = m.metadata.intelligenceTrace;
                 }
             }
 
@@ -36,7 +45,9 @@ export async function GET(
                 role: m.role,
                 content: m.content,
                 products: products.length > 0 ? products : undefined,
-                tracking: tracking || undefined
+                tracking: tracking || undefined,
+                traceReport: traceReport || undefined,
+                intelligenceTrace: intelligenceTrace || undefined
             };
         });
 

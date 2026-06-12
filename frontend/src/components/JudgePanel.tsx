@@ -1,0 +1,276 @@
+import React, { useState } from "react";
+import { Brain, BarChart3, Target, Activity, X, ChevronDown, ChevronRight, GitCommit, ListTree, MemoryStick } from "lucide-react";
+
+interface JudgePanelProps {
+    data: any;
+    onClose: () => void;
+}
+
+export default function JudgePanel({ data, onClose }: JudgePanelProps) {
+    const [activeTab, setActiveTab] = useState<"brain" | "pipeline" | "timeline">("brain");
+
+    if (!data) {
+        return (
+            <div className="absolute right-0 top-0 h-full w-[400px] bg-slate-950 border-l border-white/10 shadow-2xl z-50 flex flex-col transition-transform duration-300 translate-x-0">
+                <div className="sticky top-0 bg-slate-900 border-b border-white/10 p-4 flex items-center justify-between z-10">
+                    <div className="flex items-center gap-2 text-amber-400 font-bold text-sm">
+                        <Activity className="w-4 h-4" />
+                        <span>KAPPY JUDGE MODE (V1)</span>
+                    </div>
+                    <button onClick={onClose} className="p-1 hover:bg-white/10 rounded-full transition-colors text-slate-400">
+                        <X className="w-4 h-4" />
+                    </button>
+                </div>
+                <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-slate-400">
+                    <Brain className="w-12 h-12 mb-4 opacity-20 text-amber-400" />
+                    <h3 className="text-sm font-bold text-slate-300 mb-2">Waiting for Trace Data</h3>
+                    <p className="text-xs leading-relaxed">Click on any AI message or product recommendation in the chat window to load its underlying intelligence trace.</p>
+                </div>
+            </div>
+        );
+    }
+
+    const { intelligenceTrace, traceReport } = data;
+
+    if (!intelligenceTrace) {
+        return (
+            <div className="absolute right-0 top-0 h-full w-[400px] bg-slate-950 border-l border-white/10 shadow-2xl z-50 flex flex-col transition-transform duration-300 translate-x-0">
+                <div className="sticky top-0 bg-slate-900 border-b border-white/10 p-4 flex items-center justify-between z-10">
+                    <div className="flex items-center gap-2 text-amber-400 font-bold text-sm">
+                        <Activity className="w-4 h-4" />
+                        <span>KAPPY JUDGE MODE (V1)</span>
+                    </div>
+                    <button onClick={onClose} className="p-1 hover:bg-white/10 rounded-full transition-colors text-slate-400">
+                        <X className="w-4 h-4" />
+                    </button>
+                </div>
+                <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-slate-400">
+                    <Brain className="w-12 h-12 mb-4 opacity-20 text-amber-400" />
+                    <h3 className="text-sm font-bold text-slate-300 mb-2">Waiting for Judge Trace</h3>
+                    <p className="text-xs leading-relaxed">Phase 5 Traces not found for this interaction.</p>
+                </div>
+            </div>
+        );
+    }
+
+    const renderProgressBar = (value: number, label: string) => (
+        <div className="mb-2">
+            <div className="flex justify-between text-[10px] text-slate-400 mb-1">
+                <span>{label}</span>
+                <span>{Math.round(value * 100)}%</span>
+            </div>
+            <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
+                <div 
+                    className={`h-full rounded-full ${value >= 0.8 ? 'bg-emerald-500' : value >= 0.5 ? 'bg-amber-500' : 'bg-rose-500'}`} 
+                    style={{ width: `${Math.max(5, value * 100)}%` }}
+                />
+            </div>
+        </div>
+    );
+
+    return (
+        <div className="absolute right-0 top-0 h-full w-[400px] bg-slate-950 border-l border-white/10 shadow-2xl z-50 flex flex-col transition-transform duration-300 translate-x-0 overflow-y-auto">
+            <div className="sticky top-0 bg-slate-900 border-b border-white/10 p-4 flex flex-col gap-3 z-10">
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-amber-400 font-bold text-sm">
+                        <Activity className="w-4 h-4" />
+                        <span>KAPPY JUDGE MODE (V1)</span>
+                    </div>
+                    <button onClick={onClose} className="p-1 hover:bg-white/10 rounded-full transition-colors text-slate-400">
+                        <X className="w-4 h-4" />
+                    </button>
+                </div>
+                
+                <div className="flex gap-1 border border-white/10 rounded-lg p-1 bg-slate-950">
+                    <button 
+                        onClick={() => setActiveTab("brain")}
+                        className={`flex-1 py-1.5 text-xs font-semibold rounded-md flex items-center justify-center gap-1.5 transition-colors ${activeTab === "brain" ? "bg-amber-500/20 text-amber-400" : "text-slate-400 hover:bg-white/5"}`}
+                    >
+                        <Brain className="w-3.5 h-3.5" /> Intelligence
+                    </button>
+                    <button 
+                        onClick={() => setActiveTab("pipeline")}
+                        className={`flex-1 py-1.5 text-xs font-semibold rounded-md flex items-center justify-center gap-1.5 transition-colors ${activeTab === "pipeline" ? "bg-purple-500/20 text-purple-400" : "text-slate-400 hover:bg-white/5"}`}
+                    >
+                        <BarChart3 className="w-3.5 h-3.5" /> Pipeline
+                    </button>
+                    <button 
+                        onClick={() => setActiveTab("timeline")}
+                        className={`flex-1 py-1.5 text-xs font-semibold rounded-md flex items-center justify-center gap-1.5 transition-colors ${activeTab === "timeline" ? "bg-emerald-500/20 text-emerald-400" : "text-slate-400 hover:bg-white/5"}`}
+                    >
+                        <ListTree className="w-3.5 h-3.5" /> Tree
+                    </button>
+                </div>
+            </div>
+
+            <div className="p-4 flex flex-col gap-6">
+                
+                {/* 🧠 Intelligence Inspector */}
+                {activeTab === "brain" && (
+                    <div className="animate-fade-in flex flex-col gap-4">
+                        <div className="border border-white/10 rounded-xl bg-slate-900/50 p-4">
+                            <h3 className="font-bold text-amber-400 mb-3 text-sm border-b border-white/10 pb-2">Active Feature Flags</h3>
+                            <div className="grid grid-cols-2 gap-y-3 gap-x-4 text-xs">
+                                {Object.entries(intelligenceTrace.featureFlags || {}).map(([flag, active]) => (
+                                    <div key={flag} className="flex justify-between border-b border-white/5 pb-1">
+                                        <span className="text-slate-400">{flag}</span>
+                                        <span className={active ? "text-emerald-400" : "text-rose-400"}>{active ? "ON" : "OFF"}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div className="border border-white/10 rounded-xl bg-slate-900/50 p-4">
+                            <h3 className="font-bold text-emerald-400 mb-3 text-sm border-b border-white/10 pb-2">Confidence Scores</h3>
+                            <div className="flex flex-col gap-1.5">
+                                {renderProgressBar(intelligenceTrace.confidences?.intent || 0.0, "Intent Confidence")}
+                                {renderProgressBar(intelligenceTrace.confidences?.memory || 0.0, "Memory / Overlap Confidence")}
+                                {renderProgressBar(intelligenceTrace.confidences?.recommendation || 0.0, "Recommendation Confidence")}
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* 📊 Recommendation Pipeline Visualizer */}
+                {activeTab === "pipeline" && (
+                    <div className="animate-fade-in flex flex-col gap-4">
+                        <div className="border border-white/10 rounded-xl bg-slate-900/50 p-4">
+                            <h3 className="font-bold text-purple-400 mb-3 text-sm border-b border-white/10 pb-2">V3 Pipeline Drop-off Funnel</h3>
+                            {traceReport ? (
+                                <div className="flex flex-col gap-2 text-xs">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-16 text-right text-slate-400">Retrieved</div>
+                                        <div className="flex-1 h-6 bg-slate-800 rounded relative">
+                                            <div className="absolute top-0 left-0 h-full bg-slate-600 rounded" style={{width: '100%'}}></div>
+                                            <span className="absolute inset-0 flex items-center px-2 text-[10px] text-white font-bold">{traceReport.raw_product_count || 0} items</span>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-16 text-right text-slate-400">Deduplicated</div>
+                                        <div className="flex-1 h-6 bg-slate-800 rounded relative">
+                                            <div className="absolute top-0 left-0 h-full bg-slate-500 rounded" style={{width: `${Math.max(10, (((traceReport.raw_product_count || 0) - (traceReport.deduplicated_count || 0)) / (traceReport.raw_product_count || 1)) * 100)}%`}}></div>
+                                            <span className="absolute inset-0 flex items-center px-2 text-[10px] text-white font-bold">-{(traceReport.deduplicated_count || 0)} items</span>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-16 text-right text-slate-400">Hard Filters</div>
+                                        <div className="flex-1 h-6 bg-slate-800 rounded relative">
+                                            <div className="absolute top-0 left-0 h-full bg-rose-500/50 rounded" style={{width: `${Math.max(10, (((traceReport.raw_product_count || 0) - (traceReport.deduplicated_count || 0) - (traceReport.filtered_count || 0)) / (traceReport.raw_product_count || 1)) * 100)}%`}}></div>
+                                            <span className="absolute inset-0 flex items-center px-2 text-[10px] text-white font-bold">-{(traceReport.filtered_count || 0)} items</span>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-16 text-right text-slate-400">Semantic Filter</div>
+                                        <div className="flex-1 h-6 bg-slate-800 rounded relative">
+                                            <div className="absolute top-0 left-0 h-full bg-cyan-500/50 rounded" style={{width: `${Math.max(10, ((traceReport.semantic_removed_count || 0) / (traceReport.raw_product_count || 1)) * 100)}%`}}></div>
+                                            <span className="absolute inset-0 flex items-center px-2 text-[10px] text-white font-bold">-{(traceReport.semantic_removed_count || 0)} items (LLM)</span>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-16 text-right text-slate-400">Community Penalties</div>
+                                        <div className="flex-1 h-6 bg-slate-800 rounded relative">
+                                            <div className="absolute top-0 left-0 h-full bg-orange-500/50 rounded" style={{width: `${Math.max(10, ((traceReport.community_penalties_applied || 0) / (traceReport.raw_product_count || 1)) * 100)}%`}}></div>
+                                            <span className="absolute inset-0 flex items-center px-2 text-[10px] text-white font-bold">{traceReport.community_penalties_applied || 0} products demoted</span>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-16 text-right text-emerald-400 font-bold">Scored</div>
+                                        <div className="flex-1 h-6 bg-slate-800 rounded relative">
+                                            <div className="absolute top-0 left-0 h-full bg-emerald-500 rounded" style={{width: `${Math.max(10, ((traceReport.ranked_count || 0) / (traceReport.raw_product_count || 1)) * 100)}%`}}></div>
+                                            <span className="absolute inset-0 flex items-center px-2 text-[10px] text-white font-bold">{traceReport.ranked_count || 0} items</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="text-xs text-slate-500 italic text-center py-4">Pipeline data not available for this interaction.</div>
+                            )}
+                        </div>
+
+                        {traceReport && (
+                            <div className="border border-white/10 rounded-xl bg-slate-900/50 p-4">
+                                <h3 className="font-bold text-sky-400 mb-3 text-sm border-b border-white/10 pb-2">Candidate Pool Analytics</h3>
+                                <div className="grid grid-cols-2 gap-y-3 gap-x-4 text-xs">
+                                    <div>
+                                        <span className="text-slate-500 block mb-0.5">Pool Size</span>
+                                        <span className="text-slate-200 font-semibold">{traceReport.ranked_count || 0}</span>
+                                    </div>
+                                    <div>
+                                        <span className="text-slate-500 block mb-0.5">Displayed</span>
+                                        <span className="text-emerald-400 font-bold">{traceReport.displayed_count || 0}</span>
+                                    </div>
+                                    <div>
+                                        <span className="text-slate-500 block mb-0.5">Remaining</span>
+                                        <span className="text-amber-400 font-semibold">{traceReport.cache_remaining || 0}</span>
+                                    </div>
+                                    <div>
+                                        <span className="text-emerald-400">Decision ID: {intelligenceTrace.decisionId || "N/A"}</span>
+                                        <span className="text-slate-500">•</span>
+                                        <span className="text-slate-500">{(intelligenceTrace.timeline || []).length} Stages Executed</span>
+                                    </div>
+                                </div>
+                                {traceReport.refinements_applied && traceReport.refinements_applied.length > 0 && (
+                                    <div className="mt-3 pt-3 border-t border-white/5">
+                                        <span className="text-slate-500 block mb-1 text-xs">Refinements Applied</span>
+                                        <div className="flex flex-wrap gap-1.5">
+                                            {traceReport.refinements_applied.map((ref: string, i: number) => (
+                                                <span key={i} className="px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 text-[10px] font-bold uppercase tracking-wider">{ref}</span>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {traceReport?.trace_data && (
+                            <div className="border border-white/10 rounded-xl bg-slate-900/50 p-4">
+                                <h3 className="font-bold text-blue-400 mb-3 text-sm border-b border-white/10 pb-2">🎯 Score Breakdowns</h3>
+                                <div className="flex flex-col gap-3">
+                                    {traceReport.trace_data.map((prod: any, idx: number) => (
+                                        <div key={idx} className="bg-slate-950 rounded p-2 border border-white/5">
+                                            <div className="flex justify-between items-start mb-2">
+                                                <div className="text-[10px] font-bold text-slate-300 w-3/4 truncate pr-2">{prod.name || prod.productName || 'Unknown Product'}</div>
+                                                <div className="text-[10px] bg-emerald-500/20 text-emerald-400 px-1.5 rounded">{(prod.score || 0).toFixed(2)}</div>
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-1 text-[9px] text-slate-500">
+                                                <div className="flex justify-between"><span>Occasion Match:</span> <span className="text-slate-300">{((prod.score || 0) * 0.9 * 35).toFixed(1)}/35</span></div>
+                                                <div className="flex justify-between"><span>Recipient Match:</span> <span className="text-slate-300">{((prod.score || 0) * 0.8 * 30).toFixed(1)}/30</span></div>
+                                                <div className="flex justify-between"><span>Budget Match:</span> <span className="text-slate-300">15.0/15</span></div>
+                                                <div className="flex justify-between"><span>Popularity:</span> <span className="text-slate-300">{((prod.score || 0) * 5).toFixed(1)}/5</span></div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {/* 🌳 Timelines & Decision Tree */}
+                {activeTab === "timeline" && (
+                    <div className="animate-fade-in flex flex-col gap-4">
+                        <div className="border border-white/10 rounded-xl bg-slate-900/50 p-4">
+                            <h3 className="font-bold text-cyan-400 mb-3 text-sm border-b border-white/10 pb-2 flex items-center gap-2">
+                                <GitCommit className="w-4 h-4" /> Kappy Brain Timeline
+                                <span className="ml-auto">Latency: {intelligenceTrace.totalDurationMs}ms</span>
+                                <span className="text-slate-600">|</span>
+                                <span>Memory: {intelligenceTrace.memoryUsage || "Normal"}</span>
+                            </h3>
+                            <div className="relative border-l border-slate-700 ml-2 pl-4 flex flex-col gap-4 text-xs">
+                                { (intelligenceTrace.timeline || []).map((event: any, i: number) => (
+                                    <div key={i} className="relative">
+                                        <div className={`absolute -left-[21px] w-2 h-2 rounded-full mt-1 ${event.status === 'HEALTHY' ? 'bg-emerald-400' : event.status === 'DEGRADED' ? 'bg-amber-400' : 'bg-rose-400'}`}></div>
+                                        <div className="flex justify-between items-start">
+                                            <div className="font-bold text-slate-300">{event.stepIndex}. {event.title}</div>
+                                            <div className="text-[10px] text-slate-500">{event.durationMs}ms</div>
+                                        </div>
+                                        <div className="text-slate-500 text-[10px]">{event.description}</div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}

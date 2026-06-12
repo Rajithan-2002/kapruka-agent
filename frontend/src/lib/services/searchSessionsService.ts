@@ -6,23 +6,45 @@ export interface SearchSession {
     query: string;
     total_products: number;
     displayed_count: number;
+    displayed_ids?: string[];
     remaining_count: number;
     products: any[];
+    pool_version?: string;
+    refinement_history?: string[];
+    active_exclusions?: { target: string; strength: string }[];
+    active_price_refinement?: {
+        sort_order?: "ASC" | "DESC" | "CHEAPER" | "PREMIUM";
+        min_price?: number;
+        max_price?: number;
+    };
+    viewed_pages?: number;
+    created_at?: string;
 }
 
 export async function saveSearchSession(session: SearchSession) {
     try {
         const supabase = await createClient();
-        await supabase.from('search_sessions').upsert({
+        const { error } = await supabase.from('search_sessions').upsert({
             chat_session_id: session.chat_session_id,
             user_id: session.user_id,
             query: session.query,
             total_products: session.total_products,
             displayed_count: session.displayed_count,
+            displayed_ids: session.displayed_ids || [],
             remaining_count: session.remaining_count,
             products: session.products,
+            pool_version: session.pool_version || `pool-${Date.now()}`,
+            refinement_history: session.refinement_history || [],
+            active_exclusions: session.active_exclusions || [],
+            active_price_refinement: session.active_price_refinement || null,
+            viewed_pages: session.viewed_pages || 1,
+            created_at: session.created_at || new Date().toISOString(),
             updated_at: new Date().toISOString()
         });
+        
+        if (error) {
+            console.error('[SearchSessions] Upsert failed:', error.message);
+        }
     } catch (e) {
         console.error("Failed to save search session", e);
     }
