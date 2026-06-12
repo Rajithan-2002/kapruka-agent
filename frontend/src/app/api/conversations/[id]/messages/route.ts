@@ -10,12 +10,9 @@ export async function GET(
         const supabase = await createClient();
         const { data: { user } } = await supabase.auth.getUser();
 
-        if (!user) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-        }
-
+        const userId = user ? user.id : "00000000-0000-0000-0000-000000000000";
         const { id } = await params;
-        const messages = await getSessionHistory(user.id, id);
+        const messages = await getSessionHistory(userId, id);
         
         // Format to the message structure expected by the frontend ChatWindow component
         const formatted = messages.map(m => {

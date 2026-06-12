@@ -1,7 +1,12 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import { Sparkles, Trash2, Gift, CreditCard, ShoppingBag, X, Check, BrainCircuit, Activity } from "lucide-react";
+import { 
+  Sparkles, Trash2, Gift, CreditCard, ShoppingBag, X, Check, 
+  BrainCircuit, Activity, Home as HomeIcon, MessageSquare, 
+  Users, User as UserIcon, Mic, ArrowRight, ShieldCheck, 
+  CheckCircle2, Plus, Calendar, Eye, RefreshCw, AlertCircle, Truck
+} from "lucide-react";
 import ChatInput from "./ChatInput";
 import ChatMessage, { Message, Product } from "./ChatMessage";
 import { createClient } from "@/lib/supabase/client";
@@ -10,958 +15,1578 @@ import JudgePanel from "./JudgePanel";
 
 const getUniqueId = (prefix: string): string => `${prefix}-${Date.now()}`;
 
-// ALGORITHM 25 — WAITING STATE PERSONALITY: Varied loading messages per context
+// ALGORITHM 25 — WAITING STATE PERSONALITY: Pick loading messages
 const LOADING_PHRASES: Record<string, string[]> = {
-    tracking: [
-        "Let me check where your parcel is right now... 📦",
-        "Checking on it for you — give me a second 😊",
-        "Mama balanna — parcel eka koheda kiyala... 📦",
-    ],
-    delivery: [
-        "Checking if we can get this to you in time... 🚚",
-        "Just verifying delivery — won't take a second 😊",
-        "Checking if [city] delivery is doable... 🗺️",
-    ],
-    search: [
-        "Let me check what we've got for you... 🔍",
-        "Machan hold on, let me find the right one for you... 🔍",
-        "Searching through the good stuff — one moment 😊",
-        "Looking for the best option in the catalog... ✨",
-    ],
-    reorder: [
-        "Scanning your purchase history... 🔄",
-        "Finding what you ordered before... 🔄",
-    ],
-    order: [
-        "Putting this together now... ✍️",
-        "Almost done — setting up your order...",
-        "Creating your order — just a moment ⏳",
-    ],
-    default: [
-        "Thinking... 🧠",
-        "Give me a second — working on it 😊",
-        "On it... 🧠",
-    ],
+  tracking: [
+    "Let me check where your parcel is right now... 📦",
+    "Checking on it for you — give me a second 😊",
+    "Checking the courier status... 🚚"
+  ],
+  delivery: [
+    "Checking if we can get this to you in time... 🚚",
+    "Just verifying delivery — won't take a second 😊",
+    "Verifying Colombo delivery routes... 🗺️"
+  ],
+  search: [
+    "Let me check what we've got for you... 🔍",
+    "Searching through the catalog — one moment 😊",
+    "Looking for the best gift options... ✨"
+  ],
+  default: [
+    "Thinking... 🧠",
+    "Give me a second — working on it 😊",
+    "On it... 🧠"
+  ]
 };
 
 function getLoadingPhrase(text: string): string {
-    const normalized = text.toLowerCase();
-    let pool = LOADING_PHRASES.default;
-    if (normalized.includes("track") || normalized.includes("kp")) {
-        pool = LOADING_PHRASES.tracking;
-    } else if (normalized.includes("deliver") || normalized.includes("jaffna") || normalized.includes("kandy") || normalized.includes("colombo") || normalized.includes("place")) {
-        pool = LOADING_PHRASES.delivery;
-    } else if (normalized.includes("gift") || normalized.includes("cake") || normalized.includes("flower") || normalized.includes("chocolate") || normalized.includes("buy") || normalized.includes("find")) {
-        pool = LOADING_PHRASES.search;
-    } else if (normalized.includes("reorder") || normalized.includes("same as last") || normalized.includes("order again")) {
-        pool = LOADING_PHRASES.reorder;
-    } else if (normalized.includes("checkout") || normalized.includes("order") || normalized.includes("confirm")) {
-        pool = LOADING_PHRASES.order;
-    }
-    return pool[Math.floor(Math.random() * pool.length)];
+  const normalized = text.toLowerCase();
+  let pool = LOADING_PHRASES.default;
+  if (normalized.includes("track") || normalized.includes("kp")) {
+    pool = LOADING_PHRASES.tracking;
+  } else if (normalized.includes("deliver") || normalized.includes("colombo")) {
+    pool = LOADING_PHRASES.delivery;
+  } else if (normalized.includes("gift") || normalized.includes("cake") || normalized.includes("flower") || normalized.includes("chocolate")) {
+    pool = LOADING_PHRASES.search;
+  }
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+// Interfaces for Relationship state
+interface LocalRelationship {
+  id: string;
+  relationship_type: string;
+  nickname: string;
+  birthday?: string;
+  notes?: string;
+}
+
+interface LocalPreference {
+  id: string;
+  relationship_id?: string;
+  interest: string;
 }
 
 export default function ChatWindow() {
-    const [userTone, setUserTone] = useState<string>("neutral");
-    
-    // Fix for Supabase OAuth Redirects when the whitelist lacks a wildcard (*)
-    // If Supabase redirects to /?code=... instead of /auth/callback?code=...
-    useEffect(() => {
-        if (typeof window !== "undefined" && window.location.search.includes("code=")) {
-            window.location.href = `/auth/callback${window.location.search}`;
+  const [activeTab, setActiveTab] = useState<"home" | "build-gift" | "chat" | "memory" | "profile">("home");
+  const [showSplash, setShowSplash] = useState(true);
+  const [splashFading, setSplashFading] = useState(false);
+  const [userTone, setUserTone] = useState<string>("neutral");
+  const [user, setUser] = useState<User | null>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
+  const supabase = createClient();
+
+  // Active chat session variables
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const [conversations, setConversations] = useState<{ id: string; title: string }[]>([]);
+  const [isTyping, setIsTyping] = useState(false);
+  const [typingText, setTypingText] = useState("");
+  const [hasCheckedSession, setHasCheckedSession] = useState(false);
+
+  // Hamper / Bundle details
+  const [bundle, setBundle] = useState<Product[]>([]);
+  const [isBundleOpen, setIsBundleOpen] = useState(false);
+  const [activeMemories, setActiveMemories] = useState<string[]>([]);
+  
+  // Checkout details
+  const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
+  const [checkoutStep, setCheckoutStep] = useState<"summary" | "payment" | "success">("summary");
+  const [recipientName, setRecipientName] = useState("Nethmi");
+  const [deliveryAddress, setDeliveryAddress] = useState("No 12, Flower Rd, Colombo 03");
+  const [giftMessageText, setGiftMessageText] = useState("Happy Birthday Nethmi! Hope you love this surprise package. - Raji");
+  const [isAvailableToday, setIsAvailableToday] = useState(true);
+
+  // Judge panel / diagnostics
+  const [isJudgeMode, setIsJudgeMode] = useState(false);
+  const [selectedTraceData, setSelectedTraceData] = useState<any>(null);
+  const [isDebugMode, setIsDebugMode] = useState(false);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  // Voice Simulation state
+  const [isVoiceSimulating, setIsVoiceSimulating] = useState(false);
+  const [voiceInputText, setVoiceInputText] = useState("");
+
+  // Relationships tab state
+  const [relationships, setRelationships] = useState<LocalRelationship[]>([]);
+  const [preferences, setPreferences] = useState<LocalPreference[]>([]);
+  const [isLoadingRelationships, setIsLoadingRelationships] = useState(false);
+  const [showAddPersonModal, setShowAddPersonModal] = useState(false);
+  const [newPersonName, setNewPersonName] = useState("");
+  const [newPersonType, setNewPersonType] = useState("girlfriend");
+  const [newPersonBirthday, setNewPersonBirthday] = useState("");
+  const [newPersonInterests, setNewPersonInterests] = useState("");
+
+  // AI Bundle Builder state variables
+  const [builderRecipient, setBuilderRecipient] = useState("girlfriend");
+  const [builderOccasion, setBuilderOccasion] = useState("Birthday");
+  const [builderBudget, setBuilderBudget] = useState(5000);
+  const [isOptimizing, setIsOptimizing] = useState(false);
+  const [builderItems, setBuilderItems] = useState<{ id: string; name: string; price: number; image: string; selected: boolean }[]>([
+    { id: "roses", name: "Premium Red Roses Bouquet", price: 2200, image: "https://images.unsplash.com/photo-1561181286-d3fee7d55364?w=200&q=80", selected: true },
+    { id: "chocs", name: "Ferrero Rocher Box (16 Pcs)", price: 1800, image: "https://images.unsplash.com/photo-1549007994-cb92ca88806f?w=200&q=80", selected: true },
+    { id: "card", name: "Custom Calligraphy Greeting Card", price: 500, image: "https://images.unsplash.com/photo-1512909006721-3d6018887383?w=200&q=80", selected: true },
+  ]);
+  const [optimizationReason, setOptimizationReason] = useState<string | null>(null);
+
+  // Product detailed card viewer state
+  const [selectedDetailsProduct, setSelectedDetailsProduct] = useState<Product | null>(null);
+
+  // Splash Screen Fade out
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setSplashFading(true);
+      const fadeTimer = setTimeout(() => {
+        setShowSplash(false);
+      }, 300);
+      return () => clearTimeout(fadeTimer);
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, []);
+
+  // Fetch relationships on auth changes
+  useEffect(() => {
+    if (user) {
+      loadUserRelationships();
+    }
+  }, [user]);
+
+  const loadUserRelationships = async () => {
+    setIsLoadingRelationships(true);
+    try {
+      const res = await fetch("/api/relationships");
+      const data = await res.json();
+      if (data.relationships) setRelationships(data.relationships);
+      if (data.preferences) setPreferences(data.preferences);
+    } catch (e) {
+      console.error("Failed to load relationships:", e);
+    } finally {
+      setIsLoadingRelationships(false);
+    }
+  };
+
+  const handlePreloadDemoData = async () => {
+    setIsLoadingRelationships(true);
+    try {
+      const res = await fetch("/api/relationships", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "preload" })
+      });
+      const data = await res.json();
+      if (data.relationships) setRelationships(data.relationships);
+      if (data.preferences) setPreferences(data.preferences);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsLoadingRelationships(false);
+    }
+  };
+
+  const handleAddRelationship = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newPersonName.trim()) return;
+
+    try {
+      const res = await fetch("/api/relationships", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          relationshipType: newPersonType,
+          nickname: newPersonName,
+          birthday: newPersonBirthday,
+          notes: newPersonInterests
+        })
+      });
+      const data = await res.json();
+      if (data.relationship) {
+        await loadUserRelationships();
+        setNewPersonName("");
+        setNewPersonBirthday("");
+        setNewPersonInterests("");
+        setShowAddPersonModal(false);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  // Fix Supabase OAuth Redirect
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.location.search.includes("code=")) {
+      window.location.href = `/auth/callback${window.location.search}`;
+    }
+  }, []);
+
+  // Auth initialization
+  useEffect(() => {
+    const checkUser = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      setUser(user);
+      setIsAuthLoading(false);
+    };
+    checkUser();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      setUser(session?.user || null);
+    });
+    return () => subscription.unsubscribe();
+  }, [supabase]);
+
+  // Load conversation list
+  useEffect(() => {
+    if (!user) return;
+    const fetchConversations = async () => {
+      try {
+        const res = await fetch("/api/conversations");
+        const data = await res.json();
+        if (data.conversations) setConversations(data.conversations);
+      } catch (err) {
+        console.error("Error loading conversations:", err);
+      }
+    };
+    fetchConversations();
+  }, [user, messages]);
+
+  // Initialize or load latest session
+  useEffect(() => {
+    if (!user || hasCheckedSession) return;
+    const initSession = async () => {
+      try {
+        const res = await fetch("/api/conversations");
+        const data = await res.json();
+        if (data.conversations && data.conversations.length > 0) {
+          const savedActiveId = localStorage.getItem("kappy_active_conv_id");
+          const stillExists = data.conversations.some((c: any) => c.id === savedActiveId);
+          if (savedActiveId && stillExists) {
+            setActiveConversationId(savedActiveId);
+          } else {
+            setActiveConversationId(data.conversations[0].id);
+          }
+        } else {
+          const newId = `session-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+          await fetch("/api/conversations", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: newId, title: "New Chat" })
+          });
+          setActiveConversationId(newId);
         }
-    }, []);
+        setHasCheckedSession(true);
+      } catch (err) {
+        console.error(err);
+      }
+    };
+    initSession();
+  }, [user, hasCheckedSession]);
 
-    const [user, setUser] = useState<User | null>(null);
-    const [isAuthLoading, setIsAuthLoading] = useState(true);
-    const supabase = createClient();
+  // Fetch messages on session switch
+  useEffect(() => {
+    if (!activeConversationId) return;
+    localStorage.setItem("kappy_active_conv_id", activeConversationId);
+    const loadMessages = async () => {
+      try {
+        const res = await fetch(`/api/conversations/${activeConversationId}/messages`);
+        const data = await res.json();
+        if (data.messages) setMessages(data.messages);
+      } catch (err) {
+        console.error("Error loading messages:", err);
+      }
+    };
+    loadMessages();
+  }, [activeConversationId]);
 
-    const [messages, setMessages] = useState<Message[]>([]);
-    const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
-    const [conversations, setConversations] = useState<{ id: string; title: string; updated_at?: string }[]>([]);
-    const [isTyping, setIsTyping] = useState(false);
-    const [typingText, setTypingText] = useState("");
-    const [hasCheckedSession, setHasCheckedSession] = useState(false);
+  const startNewChat = async () => {
+    const newId = `session-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+    try {
+      await fetch("/api/conversations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: newId, title: "New Chat" })
+      });
+      setActiveConversationId(newId);
+      setMessages([]);
+      setBundle([]);
+    } catch (err) {
+      console.error(err);
+    }
+  };
 
-    // Bundle state
-    const [bundle, setBundle] = useState<Product[]>([]);
-    const [isBundleOpen, setIsBundleOpen] = useState(false);
-
-    // Active memory states shown in header
-    const [activeMemories, setActiveMemories] = useState<string[]>([]);
-    
-    // Checkout states
-    const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
-    const [checkoutStep, setCheckoutStep] = useState<"summary" | "payment" | "success">("summary");
-    const [recipientName, setRecipientName] = useState("Amma");
-    const [deliveryAddress, setDeliveryAddress] = useState("No 12, Flower Rd, Colombo 03");
-    
-    const [isJudgeMode, setIsJudgeMode] = useState(false);
-    const [selectedTraceData, setSelectedTraceData] = useState<any>(null);
-    const [isDebugMode, setIsDebugMode] = useState(false);
-    
-    const scrollContainerRef = useRef<HTMLDivElement>(null);
-
-    // Toggle Judge Mode with Ctrl+Shift+D
-    useEffect(() => {
-        const handleKeyDown = (e: KeyboardEvent) => {
-            if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'd') {
-                e.preventDefault();
-                setIsJudgeMode(prev => !prev);
-                if (isJudgeMode) setSelectedTraceData(null); // Clear selection on close
-            }
-        };
-        window.addEventListener('keydown', handleKeyDown);
-        return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [isJudgeMode]);
-
-    // Auto-scroll to bottom of messages safely (prevents layout shift bugs)
-    useEffect(() => {
-        if (scrollContainerRef.current) {
-            scrollContainerRef.current.scrollTo({
-                top: scrollContainerRef.current.scrollHeight,
-                behavior: "smooth"
-            });
+  const handleDeleteConversation = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await fetch(`/api/conversations?id=${id}`, { method: "DELETE" });
+      setConversations(prev => prev.filter(c => c.id !== id));
+      if (activeConversationId === id) {
+        const remaining = conversations.filter(c => c.id !== id);
+        if (remaining.length > 0) {
+          setActiveConversationId(remaining[0].id);
+        } else {
+          startNewChat();
         }
-    }, [messages, isTyping]);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
 
-    // Auth Setup
-    useEffect(() => {
-        const checkUser = async () => {
-            const { data: { user } } = await supabase.auth.getUser();
-            setUser(user);
-            setIsAuthLoading(false);
-        };
-        checkUser();
+  // Core messaging flow
+  const handleSendMessage = async (text: string) => {
+    const userMsgId = getUniqueId("user");
+    setMessages(prev => [...prev, { id: userMsgId, role: "user", content: text }]);
+    
+    setIsTyping(true);
+    setTypingText(getLoadingPhrase(text));
 
-        const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-            setUser(session?.user || null);
-        });
+    try {
+      const chatHistory = messages
+        .filter(msg => msg.role === "user" || msg.role === "assistant")
+        .map(msg => ({ role: msg.role, content: msg.content }));
 
-        return () => subscription.unsubscribe();
-    }, [supabase]);
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: text,
+          history: chatHistory,
+          sessionId: activeConversationId
+        }),
+      });
 
-    // Fetch conversation list whenever active user exists or messages update (captures title generation updates)
-    useEffect(() => {
-        if (!user) return;
+      if (!response.body) throw new Error("No response body");
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      
+      const aiMsgId = `kappy-${Date.now()}`;
+      setMessages(prev => [...prev, { id: aiMsgId, role: "assistant", content: "" }]);
+      setIsTyping(false);
+
+      let accumulatedText = "";
+      let customData: any = null;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
         
-        const fetchConversations = async () => {
+        const chunk = decoder.decode(value, { stream: true });
+        const lines = chunk.split('\n').filter(Boolean);
+        
+        for (const line of lines) {
+          if (line.startsWith('0:')) {
             try {
-                const res = await fetch("/api/conversations");
-                const data = await res.json();
-                if (data.conversations) {
-                    setConversations(data.conversations);
-                }
-            } catch (err) {
-                console.error("Error loading conversations:", err);
-            }
-        };
-
-        fetchConversations();
-    }, [user, messages]);
-
-    // Initialize or load latest conversation on mount/login
-    useEffect(() => {
-        if (!user || hasCheckedSession) return;
-
-        const initSession = async () => {
+              const textPart = JSON.parse(line.substring(2));
+              accumulatedText += textPart;
+              setMessages(prev => prev.map(m => m.id === aiMsgId ? { ...m, content: accumulatedText } : m));
+            } catch (e) {}
+          } else if (line.startsWith('2:') || line.startsWith('8:') || line.startsWith('data:')) {
             try {
-                const res = await fetch("/api/conversations");
-                const data = await res.json();
-                if (data.conversations && data.conversations.length > 0) {
-                    // Try to restore last active conversation from localStorage
-                    const savedActiveId = localStorage.getItem("kappy_active_conv_id");
-                    const stillExists = data.conversations.some((c: any) => c.id === savedActiveId);
-                    if (savedActiveId && stillExists) {
-                        setActiveConversationId(savedActiveId);
-                    } else {
-                        setActiveConversationId(data.conversations[0].id);
-                    }
-                } else {
-                    // Create first conversation
-                    const newId = `session-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-                    await fetch("/api/conversations", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ id: newId, title: "New Chat" })
-                    });
-                    setActiveConversationId(newId);
-                }
-                setHasCheckedSession(true);
-            } catch (err) {
-                console.error(err);
-            }
-        };
-        initSession();
-    }, [user, hasCheckedSession]);
-
-    // Fetch messages when active conversation switches
-    useEffect(() => {
-        if (!activeConversationId) return;
-        localStorage.setItem("kappy_active_conv_id", activeConversationId);
-
-        const loadMessages = async () => {
-            try {
-                const res = await fetch(`/api/conversations/${activeConversationId}/messages`);
-                const data = await res.json();
-                if (data.messages) {
-                    setMessages(data.messages);
-                }
-            } catch (err) {
-                console.error("Error loading messages:", err);
-            }
-        };
-
-        loadMessages();
-    }, [activeConversationId]);
-
-    const startNewChat = async () => {
-        const newId = `session-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-        try {
-            await fetch("/api/conversations", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ id: newId, title: "New Chat" })
-            });
-            setActiveConversationId(newId);
-            setMessages([]);
-            setBundle([]);
-        } catch (err) {
-            console.error(err);
-        }
-    };
-
-    const handleDeleteConversation = async (id: string, e: React.MouseEvent) => {
-        e.stopPropagation();
-        try {
-            await fetch(`/api/conversations?id=${id}`, {
-                method: "DELETE"
-            });
-            
-            // Update the local state list immediately
-            setConversations(prev => prev.filter(c => c.id !== id));
-            
-            if (activeConversationId === id) {
-                const remaining = conversations.filter(c => c.id !== id);
-                if (remaining.length > 0) {
-                    setActiveConversationId(remaining[0].id);
-                } else {
-                    // Initialize a fresh chat session
-                    const newId = `session-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-                    await fetch("/api/conversations", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ id: newId, title: "New Chat" })
-                    });
-                    setActiveConversationId(newId);
-                    setMessages([]);
-                }
-            }
-        } catch (err) {
-            console.error(err);
-        }
-    };
-
-    const addToBundle = (product: Product) => {
-        if (!bundle.some(item => item.id === product.id)) {
-            setBundle(prev => [...prev, product]);
-            setIsBundleOpen(true);
-            
-            // Track in purchase history
-            fetch("/api/track", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    product: {
-                        id: product.id,
-                        name: product.name,
-                        category: product.category || "General",
-                        price: product.price
-                    },
-                    action: "added_to_bundle",
-                    sessionContext: { sessionId: activeConversationId }
-                })
-            }).catch(err => console.error("Error tracking add to bundle:", err));
-
-            // Add a temporary system message to indicate item was added
-            const systemMsg: Message = {
-                id: `system-add-${Date.now()}`,
-                role: "assistant",
-                content: `Added "${product.name}" to your bundle! 🎁`
-            };
-            setMessages(prev => [...prev, systemMsg]);
-        }
-    };
-
-    const removeFromBundle = (productId: string) => {
-        setBundle(prev => prev.filter(item => item.id !== productId));
-    };
-
-    const clearChat = () => {
-        setMessages([]);
-        setActiveMemories([]);
-        setBundle([]);
-        const newSessionId = getUniqueId("conv");
-        setActiveConversationId(newSessionId);
-    };
-
-    const fetchGeneralResponse = async (text: string) => {
-        setIsTyping(true);
-        // ALGORITHM 25 — WAITING STATE PERSONALITY: Pick a varied, personality-driven loading phrase
-        setTypingText(getLoadingPhrase(text));
-
-        try {
-            const chatHistory = messages
-                .filter(msg => msg.role === "user" || msg.role === "assistant")
-                .map(msg => ({
-                    role: msg.role,
-                    content: msg.content
-                }));
-
-            const response = await fetch("/api/chat", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                    message: text,
-                    history: chatHistory,
-                    sessionId: activeConversationId
-                }),
-            });
-
-            if (!response.body) throw new Error("No response body");
-
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder();
-            
-            const aiMsgId = `kappy-${Date.now()}`;
-            setMessages(prev => [
-                ...prev,
-                { id: aiMsgId, role: "assistant", content: "" }
-            ]);
-            setIsTyping(false);
-
-            let accumulatedText = "";
-            let customData: any = null;
-
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                
-                const chunk = decoder.decode(value, { stream: true });
-                const lines = chunk.split('\n').filter(Boolean);
-                
-                for (const line of lines) {
-                    if (line.startsWith('0:')) {
-                        try {
-                            const textPart = JSON.parse(line.substring(2));
-                            accumulatedText += textPart;
-                            setMessages(prev => prev.map(m => m.id === aiMsgId ? { ...m, content: accumulatedText } : m));
-                        } catch (e) {}
-                    } else if (line.startsWith('2:') || line.startsWith('8:') || line.startsWith('data:')) {
-                        try {
-                            const dataStr = line.startsWith('data:') ? line.substring(5) : line.substring(2);
-                            const parsed = JSON.parse(dataStr);
-                            if (Array.isArray(parsed) && parsed.length > 0) {
-                                customData = { ...customData, ...parsed[0] };
-                            } else if (parsed && typeof parsed === 'object') {
-                                customData = { ...customData, ...parsed };
-                            }
-                            // Update UI immediately with products
-                            if (customData) {
-                                setMessages(prev => prev.map(m => m.id === aiMsgId ? {
-                                    ...m,
-                                    products: customData.products || m.products,
-                                    tracking: customData.tracking || m.tracking,
-                                    traceReport: customData.traceReport || m.traceReport,
-                                    intelligenceTrace: customData.intelligenceTrace || m.intelligenceTrace,
-                                    judgeModeTrace: customData.judgeModeTrace || m.judgeModeTrace,
-                                    transparencyMessage: customData.transparencyMessage || m.transparencyMessage,
-                                    followUpSuggestions: customData.followUpSuggestions || m.followUpSuggestions
-                                } : m));
-                            }
-                        } catch (e) {}
-                    } else if (line.startsWith('{')) {
-                        try {
-                            const parsedData = JSON.parse(line);
-                            if (parsedData.role === "assistant") {
-                                accumulatedText = parsedData.content;
-                                customData = { ...customData, ...parsedData };
-                                setMessages(prev => prev.map(m => m.id === aiMsgId ? { ...m, content: accumulatedText } : m));
-                            }
-                        } catch (e) {}
-                    }
-                }
-            }
-
-            if (customData) {
+              const dataStr = line.startsWith('data:') ? line.substring(5) : line.substring(2);
+              const parsed = JSON.parse(dataStr);
+              if (Array.isArray(parsed) && parsed.length > 0) {
+                customData = { ...customData, ...parsed[0] };
+              } else if (parsed && typeof parsed === 'object') {
+                customData = { ...customData, ...parsed };
+              }
+              if (customData) {
                 setMessages(prev => prev.map(m => m.id === aiMsgId ? {
-                    ...m,
-                    products: customData.products,
-                    tracking: customData.tracking,
-                    traceReport: customData.traceReport || null,
-                    intelligenceTrace: customData.intelligenceTrace || null,
-                    judgeModeTrace: customData.judgeModeTrace || null,
-                    transparencyMessage: customData.transparencyMessage || null,
-                    followUpSuggestions: customData.followUpSuggestions || null
+                  ...m,
+                  products: customData.products || m.products,
+                  tracking: customData.tracking || m.tracking,
+                  traceReport: customData.traceReport || m.traceReport,
+                  intelligenceTrace: customData.intelligenceTrace || m.intelligenceTrace,
+                  judgeModeTrace: customData.judgeModeTrace || m.judgeModeTrace,
+                  transparencyMessage: customData.transparencyMessage || m.transparencyMessage,
+                  followUpSuggestions: customData.followUpSuggestions || m.followUpSuggestions
                 } : m));
-                
-                if (customData.activeMemories && Array.isArray(customData.activeMemories)) {
-                    setActiveMemories(customData.activeMemories);
-                }
-            }
-        } catch (error) {
-            console.error(error);
-            setIsTyping(false);
-            setMessages(prev => [
-                ...prev,
-                {
-                    id: `kappy-${Date.now()}`,
-                    role: "assistant",
-                    content: "Machan, sorry, I couldn't connect to my brain. Let's try again in a bit! 😕"
-                }
-            ]);
+              }
+            } catch (e) {}
+          }
         }
-    };
+      }
 
-    const handleSendMessage = async (text: string) => {
-        // 1. Add User Message
-        const userMsgId = getUniqueId("user");
-        setMessages(prev => [...prev, { id: userMsgId, role: "user", content: text }]);
-
-        // 2. Call AI Backend
-        fetchGeneralResponse(text);
-    };
-
-
-
-    // Calculate bundle total
-    const bundleTotal = bundle.reduce((sum, item) => sum + item.price, 0);
-
-    const handleCheckoutSubmit = (e: React.FormEvent) => {
-        e.preventDefault();
-        setCheckoutStep("payment");
+      if (customData) {
+        setMessages(prev => prev.map(m => m.id === aiMsgId ? {
+          ...m,
+          products: customData.products,
+          tracking: customData.tracking,
+          traceReport: customData.traceReport || null,
+          intelligenceTrace: customData.intelligenceTrace || null,
+          judgeModeTrace: customData.judgeModeTrace || null,
+          transparencyMessage: customData.transparencyMessage || null,
+          followUpSuggestions: customData.followUpSuggestions || null
+        } : m));
         
-        setTimeout(() => {
-            setCheckoutStep("success");
-            
-            // Track the purchased items
-            bundle.forEach(item => {
-                fetch("/api/track", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        product: {
-                            id: item.id,
-                            name: item.name,
-                            category: item.category || "General",
-                            price: item.price
-                        },
-                        action: "purchased",
-                        sessionContext: { sessionId: activeConversationId, recipientName, deliveryAddress }
-                    })
-                }).catch(err => console.error("Error tracking purchase:", err));
-            });
+        if (customData.activeMemories && Array.isArray(customData.activeMemories)) {
+          setActiveMemories(customData.activeMemories);
+        }
+      }
+    } catch (error) {
+      console.error(error);
+      setIsTyping(false);
+      setMessages(prev => [
+        ...prev,
+        {
+          id: `kappy-${Date.now()}`,
+          role: "assistant",
+          content: "Machan, sorry, I couldn't connect to my brain. Let's try again in a bit! 😕"
+        }
+      ]);
+    }
+  };
 
-            setBundle([]); // Clear bundle on successful payment
-            
-            // Add a success confirmation to chat
-            const confirmationMsg: Message = {
-                id: `success-${Date.now()}`,
-                role: "assistant",
-                content: `Machan, everything is set! 🎉\n\nYour order has been created. I've sent a confirmation to your email. I'll monitor the delivery and let you know when the courier is nearby! Order details:\n\n- **Recipient:** ${recipientName}\n- **Delivery Address:** ${deliveryAddress}\n- **Total Paid:** Rs. ${(bundleTotal).toLocaleString()}\n\nThank you for shopping with your friend Kappy! 😊`
-            };
-            setMessages(prev => [...prev, confirmationMsg]);
-        }, 2000);
+  // Keyboard shortcut listener for judge mode
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'd') {
+        e.preventDefault();
+        setIsJudgeMode(prev => !prev);
+      }
     };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
-    if (isAuthLoading) {
-        return (
-            <div className="flex-1 h-screen bg-[#090D16] flex items-center justify-center">
-                <BrainCircuit className="w-12 h-12 text-amber-400 animate-pulse" />
-            </div>
-        );
+  // Auto scroll
+  useEffect(() => {
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTo({
+        top: scrollContainerRef.current.scrollHeight,
+        behavior: "smooth"
+      });
     }
+  }, [messages, isTyping]);
 
-    if (!user) {
-        return (
-            <div className="flex flex-col items-center justify-center h-screen bg-[#090D16] text-white p-6 relative overflow-hidden">
-                <div className="absolute top-[-20%] left-[-10%] w-[60%] h-[60%] rounded-full bg-violet-600/10 blur-[150px] pointer-events-none" />
-                <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] rounded-full bg-amber-500/10 blur-[120px] pointer-events-none" />
-                
-                <div className="relative z-10 flex flex-col items-center bg-slate-900/50 backdrop-blur-2xl p-10 rounded-3xl border border-white/10 shadow-2xl max-w-md w-full text-center">
-                    <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-amber-400 to-rose-500 shadow-lg shadow-rose-950/40 flex items-center justify-center mb-6">
-                        <span className="font-black text-3xl text-slate-950">K</span>
-                    </div>
-                    <h2 className="text-2xl font-extrabold mb-2">Welcome to Kappy AI</h2>
-                    <p className="text-slate-400 text-sm mb-8 leading-relaxed">
-                        Sign in to sync your preferences, remember relationships, and get truly personalized Kapruka recommendations.
-                    </p>
-                    <button
-                        onClick={() => supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: `${window.location.origin}/auth/callback` } })}
-                        className="w-full flex items-center justify-center gap-3 py-3.5 bg-white text-slate-900 font-bold rounded-xl hover:bg-slate-100 transition-all active:scale-95 shadow-lg"
-                    >
-                        <svg className="w-5 h-5" viewBox="0 0 24 24">
-                            <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-                            <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-                            <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
-                            <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
-                        </svg>
-                        Sign in with Google
-                    </button>
-                    
-                    <button
-                        onClick={() => setUser({ id: "guest-123", email: "guest@kapruka.com" } as User)}
-                        className="mt-4 w-full py-3.5 bg-transparent border border-white/20 text-white/70 font-medium rounded-xl hover:bg-white/5 hover:text-white transition-all active:scale-95"
-                    >
-                        Continue as Guest
-                    </button>
-                </div>
-            </div>
-        );
+  const handleMicClick = () => {
+    if (isVoiceSimulating) return;
+    setIsVoiceSimulating(true);
+    setVoiceInputText("");
+    const targetQuery = "I need a birthday gift for my girlfriend under LKR 5000";
+    let index = 0;
+    
+    const typingInterval = setInterval(() => {
+      setVoiceInputText(prev => prev + targetQuery[index]);
+      index++;
+      if (index >= targetQuery.length) {
+        clearInterval(typingInterval);
+        setTimeout(() => {
+          setIsVoiceSimulating(false);
+          setActiveTab("chat");
+          handleSendMessage(targetQuery);
+        }, 800);
+      }
+    }, 45);
+  };
+
+  // AI Optimizer local algorithm
+  const handleOptimizeHamper = () => {
+    setIsOptimizing(true);
+    setTimeout(() => {
+      setIsOptimizing(false);
+      if (builderBudget <= 3500) {
+        setBuilderItems([
+          { id: "roses", name: "Single Red Rose (Eco Pack)", price: 600, image: "https://images.unsplash.com/photo-1561181286-d3fee7d55364?w=200&q=80", selected: true },
+          { id: "chocs", name: "Cadbury Dairy Milk Tray", price: 900, image: "https://images.unsplash.com/photo-1549007994-cb92ca88806f?w=200&q=80", selected: true },
+          { id: "card", name: "Classic Greeting Card", price: 300, image: "https://images.unsplash.com/photo-1512909006721-3d6018887383?w=200&q=80", selected: true }
+        ]);
+        setOptimizationReason("Swapped luxury chocolates for Cadbury & downsized rose arrangement to perfectly fit LKR 3,500 budget.");
+      } else if (builderBudget <= 6000) {
+        setBuilderItems([
+          { id: "roses", name: "Premium Red Roses Bouquet", price: 2200, image: "https://images.unsplash.com/photo-1561181286-d3fee7d55364?w=200&q=80", selected: true },
+          { id: "chocs", name: "Ferrero Rocher Box (16 Pcs)", price: 1800, image: "https://images.unsplash.com/photo-1549007994-cb92ca88806f?w=200&q=80", selected: true },
+          { id: "card", name: "Custom Calligraphy Greeting Card", price: 500, image: "https://images.unsplash.com/photo-1512909006721-3d6018887383?w=200&q=80", selected: true },
+        ]);
+        setOptimizationReason("Optimal arrangement matches LKR 5,000 budget with 16 Ferrero piece box.");
+      } else {
+        setBuilderItems([
+          { id: "roses", name: "Premium 24 Roses Arrangement", price: 4500, image: "https://images.unsplash.com/photo-1561181286-d3fee7d55364?w=200&q=80", selected: true },
+          { id: "chocs", name: "Ferrero Rocher Gold Luxury Tin (24 Pcs)", price: 3200, image: "https://images.unsplash.com/photo-1549007994-cb92ca88806f?w=200&q=80", selected: true },
+          { id: "card", name: "Deluxe Pop-up Keepsake Greeting Card", price: 800, image: "https://images.unsplash.com/photo-1512909006721-3d6018887383?w=200&q=80", selected: true },
+        ]);
+        setOptimizationReason("Upgraded package components to premium tiers and added pop-up gift card option.");
+      }
+    }, 1200);
+  };
+
+  const addToBundle = (product: Product) => {
+    if (!bundle.some(item => item.id === product.id)) {
+      setBundle(prev => [...prev, product]);
+      setIsBundleOpen(true);
     }
+  };
 
+  const removeFromBundle = (productId: string) => {
+    setBundle(prev => prev.filter(item => item.id !== productId));
+  };
+
+  const bundleTotal = bundle.reduce((sum, item) => sum + item.price, 0);
+
+  const handleCheckoutSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setCheckoutStep("payment");
+    setTimeout(() => {
+      setCheckoutStep("success");
+      const confirmationMsg: Message = {
+        id: `success-${Date.now()}`,
+        role: "assistant",
+        content: `Machan, payment went through! 🎉\n\nI have created your secure order. I'll monitor the delivery slot carefully and update you as we proceed.\n\n- **Recipient:** ${recipientName}\n- **Message:** "${giftMessageText}"\n- **Delivery Address:** ${deliveryAddress}\n- **Total Paid:** LKR ${(bundleTotal).toLocaleString()}\n\nThank you for choosing Kappy! 😊`
+      };
+      setMessages(prev => [...prev, confirmationMsg]);
+      setBundle([]);
+    }, 1500);
+  };
+
+  if (isAuthLoading) {
     return (
-        <div className="relative flex flex-col md:flex-row flex-1 h-screen bg-[#090D16] overflow-hidden text-white font-sans">
-            
-            {/* Sidebar history */}
-            <div className="w-full md:w-64 bg-slate-950/80 backdrop-blur-xl border-r border-white/5 flex flex-col h-[30vh] md:h-full z-20">
-                <div className="p-4 border-b border-white/5 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                        <Sparkles className="w-4 h-4 text-amber-400" />
-                        <span className="font-extrabold text-sm tracking-wide text-slate-200">Chat History</span>
-                    </div>
-                    <button 
-                        onClick={startNewChat}
-                        className="p-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold transition-all flex items-center justify-center"
-                        title="New Chat"
-                    >
-                        <span className="text-xs px-1">New Chat</span>
-                    </button>
-                </div>
-                
-                <div className="flex-1 overflow-y-auto p-3 space-y-1">
-                    {conversations.length === 0 ? (
-                        <div className="text-xs text-slate-500 text-center py-6">No previous chats.</div>
-                    ) : (
-                        conversations.map((conv) => (
-                            <div
-                                key={conv.id}
-                                onClick={() => setActiveConversationId(conv.id)}
-                                className={`group flex items-center justify-between p-2.5 rounded-xl cursor-pointer transition-all ${
-                                    activeConversationId === conv.id
-                                        ? "bg-white/10 text-white font-semibold border border-white/10"
-                                        : "hover:bg-white/5 text-slate-400 hover:text-slate-200"
-                                }`}
-                            >
-                                <span className="text-xs truncate flex-1 pr-2">{conv.title}</span>
-                                <button
-                                    onClick={(e) => handleDeleteConversation(conv.id, e)}
-                                    className="opacity-0 group-hover:opacity-100 p-1 hover:bg-white/10 rounded-md text-rose-400 transition-opacity"
-                                >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                            </div>
-                        ))
-                    )}
-                </div>
-
-                {/* Judge Mode Toggle */}
-                <div className="p-4 border-t border-white/5 bg-slate-900/50">
-                    <button
-                        onClick={() => setIsJudgeMode(!isJudgeMode)}
-                        className={`w-full py-2.5 rounded-xl border flex items-center justify-center gap-2 text-sm font-bold transition-all active:scale-95 ${
-                            isJudgeMode 
-                                ? "bg-amber-500/20 text-amber-400 border-amber-500/50 shadow-[0_0_15px_rgba(245,158,11,0.2)]" 
-                                : "bg-white/5 text-slate-400 border-white/10 hover:bg-white/10 hover:text-white"
-                        }`}
-                    >
-                        <Activity className="w-4 h-4" />
-                        {isJudgeMode ? "Judge Mode Active" : "Enable Judge Mode"}
-                    </button>
-                </div>
-            </div>
-
-            {/* Background Glow effects */}
-            <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] rounded-full bg-violet-600/10 blur-[120px] pointer-events-none" />
-            <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] rounded-full bg-amber-500/10 blur-[120px] pointer-events-none" />
-
-            {/* Main Chat Content Panel */}
-            <div className="flex-1 flex flex-col h-full relative z-10 border-r border-white/5">
-                
-                {/* Header Widget */}
-                <header className="shrink-0 flex items-center justify-between px-6 py-4 bg-slate-900/40 backdrop-blur-xl border-b border-white/5">
-                    <div className="flex items-center gap-3">
-                        <div className="relative flex items-center justify-center w-10 h-10 rounded-2xl bg-gradient-to-tr from-amber-400 to-rose-500 shadow-lg shadow-rose-950/20">
-                            <span className="font-black text-lg text-slate-950">K</span>
-                            <span className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 border-2 border-[#090D16] rounded-full" />
-                        </div>
-                        <div>
-                            <h1 className="font-extrabold text-white text-base leading-tight">Kappy</h1>
-                            <p className="text-[11px] text-slate-400 font-semibold flex items-center gap-1.5">
-                                Your Shopping Friend <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                            </p>
-                        </div>
-                    </div>
-
-                    {/* Active Memory Context indicator */}
-                    {activeMemories.length > 0 && (
-                        <div className="hidden lg:flex items-center gap-2 px-3 py-1.5 bg-white/5 border border-white/10 rounded-xl">
-                            <span className="text-[10px] font-bold text-amber-400 flex items-center gap-1">
-                                <BrainCircuit className="w-3.5 h-3.5" /> Active Context:
-                            </span>
-                            <div className="flex gap-1.5">
-                                {activeMemories.map((mem, i) => (
-                                    <span key={i} className="px-2 py-0.5 text-[10px] font-semibold bg-white/10 text-white rounded-md">
-                                        {mem}
-                                    </span>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-
-                    <div className="flex items-center gap-3">
-                        <button
-                            onClick={() => setIsDebugMode(!isDebugMode)}
-                            title="Toggle Developer Trace View"
-                            className={`p-2.5 rounded-xl border transition-all active:scale-95 ${isDebugMode ? "bg-purple-500/20 text-purple-400 border-purple-500/50" : "bg-white/5 text-slate-400 hover:text-purple-400 border-white/5 hover:border-purple-500/20"}`}
-                        >
-                            <BrainCircuit className="w-4 h-4" />
-                        </button>
-
-                        <button
-                            onClick={clearChat}
-                            title="Reset Chat"
-                            className="p-2.5 text-slate-400 hover:text-rose-400 bg-white/5 hover:bg-rose-500/10 border border-white/5 hover:border-rose-500/20 rounded-xl transition-all active:scale-95"
-                        >
-                            <Trash2 className="w-4 h-4" />
-                        </button>
-                        
-                        {user && (
-                            <div className="flex items-center gap-2 pl-3 border-l border-white/10">
-                                <img 
-                                    src={user.user_metadata?.avatar_url || "https://www.gravatar.com/avatar/?d=mp"} 
-                                    alt="Avatar" 
-                                    className="w-8 h-8 rounded-full border border-white/10" 
-                                />
-                                <button 
-                                    onClick={() => supabase.auth.signOut()}
-                                    className="text-xs font-semibold text-slate-400 hover:text-white transition-colors"
-                                >
-                                    Log out
-                                </button>
-                            </div>
-                        )}
-                        
-                        
-                        {/* Bundle Sidebar Toggle (Mobile only) */}
-                        <button
-                            onClick={() => setIsBundleOpen(!isBundleOpen)}
-                            className="md:hidden relative p-2.5 text-slate-300 bg-white/5 border border-white/5 rounded-xl active:scale-95"
-                        >
-                            <ShoppingBag className="w-4 h-4" />
-                            {bundle.length > 0 && (
-                                <span className="absolute -top-1 -right-1 flex items-center justify-center w-5 h-5 bg-rose-500 text-[10px] font-bold rounded-full border-2 border-[#090D16]">
-                                    {bundle.length}
-                                </span>
-                            )}
-                        </button>
-                    </div>
-                </header>
-
-                {/* Chat Message Box Container */}
-                <div 
-                    ref={scrollContainerRef}
-                    className="flex-1 overflow-y-auto px-6 py-6 space-y-4 scrollbar-thin relative"
-                >
-                    {messages.map((msg, i) => (
-                            <div 
-                                key={msg.id} 
-                                className={`transition-all duration-300 ${isJudgeMode ? 'cursor-pointer hover:opacity-80 hover:bg-white/5 rounded-2xl p-2 -mx-2' : ''}`}
-                                onClick={() => {
-                                    if (isJudgeMode) {
-                                        setSelectedTraceData({
-                                            traceReport: msg.traceReport,
-                                            intelligenceTrace: msg.judgeModeTrace,
-                                            message: msg.content
-                                        });
-                                    }
-                                }}
-                            >
-                                <ChatMessage 
-                                    message={msg} 
-                                    isDebugMode={isDebugMode}
-                                    userId={user?.id}
-                                    sessionId={activeConversationId}
-                                    onAddToBundle={addToBundle}
-                                    onFollowUpClick={(text) => handleSendMessage(text)}
-                                />
-                            </div>
-                    ))}
-
-                    {/* Simulated assistant typing indicator */}
-                    {isTyping && (
-                        <ChatMessage
-                            message={{
-                                id: "typing-indicator",
-                                role: "assistant",
-                                content: "",
-                                isLoading: true,
-                                loadingText: typingText
-                            }}
-                        />
-                    )}
-
-                    {/* Scroll anchor padding */}
-                    <div className="h-2" />
-                </div>
-
-                {/* ALGORITHM 20 — COLD START: Quick-tap chips to remove "what do I even type?" paralysis */}
-                {messages.length <= 1 && !isTyping && (
-                    <div className="px-6 py-4 grid grid-cols-2 md:grid-cols-4 gap-3 bg-slate-900/10 border-t border-white/5">
-                        <button
-                            id="chip-gift-for-someone"
-                            onClick={() => handleSendMessage("🎂 Gift for someone")}
-                            className="flex items-center justify-center gap-2 p-3 text-xs md:text-sm font-semibold text-slate-200 bg-slate-900/60 hover:bg-amber-500/10 active:scale-95 border border-white/10 hover:border-amber-400/40 rounded-xl shadow-lg transition-all duration-200"
-                        >
-                            🎁 Gift for Someone
-                        </button>
-                        <button
-                            id="chip-track-order"
-                            onClick={() => handleSendMessage("📦 Track my order")}
-                            className="flex items-center justify-center gap-2 p-3 text-xs md:text-sm font-semibold text-slate-200 bg-slate-900/60 hover:bg-rose-500/10 active:scale-95 border border-white/10 hover:border-rose-400/40 rounded-xl shadow-lg transition-all duration-200"
-                        >
-                            📦 Track my Order
-                        </button>
-                        <button
-                            id="chip-reorder"
-                            onClick={() => handleSendMessage("🔄 Reorder something")}
-                            className="flex items-center justify-center gap-2 p-3 text-xs md:text-sm font-semibold text-slate-200 bg-slate-900/60 hover:bg-indigo-500/10 active:scale-95 border border-white/10 hover:border-indigo-400/40 rounded-xl shadow-lg transition-all duration-200"
-                        >
-                            🔄 Reorder Something
-                        </button>
-                        <button
-                            id="chip-just-browsing"
-                            onClick={() => handleSendMessage("Just browsing")}
-                            className="flex items-center justify-center gap-2 p-3 text-xs md:text-sm font-semibold text-slate-200 bg-slate-900/60 hover:bg-slate-800 active:scale-95 border border-white/10 hover:border-white/20 rounded-xl shadow-lg transition-all duration-200"
-                        >
-                            🛒 Just Browsing
-                        </button>
-                    </div>
-                )}
-
-                {/* Bottom Input Area */}
-                <div className="shrink-0 p-6 bg-slate-900/30 backdrop-blur-xl border-t border-white/5">
-                    <ChatInput onSendMessage={handleSendMessage} disabled={isTyping} />
-                </div>
-            </div>
-
-            {/* Persistent Right Panel: Bundle Builder (Desktop View / Collapsible Drawer) */}
-            <aside
-                className={`w-full md:w-[360px] h-full bg-slate-950/70 backdrop-blur-2xl border-l border-white/5 flex flex-col transition-all duration-500 relative z-20 ${
-                    isBundleOpen
-                        ? "fixed inset-y-0 right-0 md:relative"
-                        : "fixed inset-y-0 right-[-100%] md:relative md:right-0 md:flex"
-                }`}
-            >
-                <div className="flex items-center justify-between px-6 py-5 bg-slate-900/40 border-b border-white/5">
-                    <div className="flex items-center gap-2">
-                        <div className="p-2 bg-gradient-to-tr from-amber-400 to-rose-500 text-slate-950 rounded-lg">
-                            <Gift className="w-4 h-4" />
-                        </div>
-                        <h2 className="font-extrabold text-white text-base">Your Bundle Package</h2>
-                    </div>
-                    
-                    {/* Close drawer (Mobile only) */}
-                    <button
-                        onClick={() => setIsBundleOpen(false)}
-                        className="md:hidden p-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg"
-                    >
-                        <X className="w-5 h-5" />
-                    </button>
-                </div>
-
-                {/* Package item list */}
-                <div className="flex-1 overflow-y-auto p-6 space-y-4">
-                    {bundle.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center h-full text-center p-6 text-slate-500">
-                            <ShoppingBag className="w-12 h-12 mb-3 opacity-30 animate-pulse text-amber-400" />
-                            <h3 className="font-semibold text-sm text-slate-400 mb-1">Create Your Custom Bundle</h3>
-                            <p className="text-xs text-slate-500 leading-relaxed max-w-xs">
-                                Add recommended cakes, flowers, and hampers to pack them into a single surprise package.
-                            </p>
-                        </div>
-                    ) : (
-                        bundle.map((item) => (
-                            <div
-                                key={item.id}
-                                className="flex gap-3 p-3 bg-white/5 border border-white/5 rounded-xl hover:border-white/10 group transition-all"
-                            >
-                                <img
-                                    src={item.image_url}
-                                    alt={item.name}
-                                    className="w-14 h-14 object-cover rounded-lg bg-slate-900 border border-white/5"
-                                />
-                                <div className="flex-1 min-w-0">
-                                    <h4 className="font-bold text-white text-xs md:text-sm truncate">{item.name}</h4>
-                                    <p className="text-xs text-amber-400 font-semibold mt-0.5">
-                                        Rs. {item.price.toLocaleString()}
-                                    </p>
-                                    <button
-                                        onClick={() => removeFromBundle(item.id)}
-                                        className="text-[10px] text-rose-400 hover:underline mt-1 font-medium block"
-                                    >
-                                        Remove Item
-                                    </button>
-                                </div>
-                            </div>
-                        ))
-                    )}
-                </div>
-
-                {/* Subtotal & Checkout Section */}
-                {bundle.length > 0 && (
-                    <div className="p-6 bg-slate-900/60 border-t border-white/5 space-y-4">
-                        <div className="flex items-center justify-between text-sm">
-                            <span className="text-slate-400 font-medium">Bundle Subtotal</span>
-                            <span className="text-lg font-black text-white">Rs. {bundleTotal.toLocaleString()}</span>
-                        </div>
-                        
-                        <button
-                            onClick={() => {
-                                setIsCheckoutOpen(true);
-                                setCheckoutStep("summary");
-                            }}
-                            className="w-full flex items-center justify-center gap-2 py-3 bg-gradient-to-r from-amber-500 to-rose-500 hover:from-amber-600 hover:to-rose-600 active:scale-95 text-white font-extrabold text-sm rounded-xl shadow-lg transition-all"
-                        >
-                            <CreditCard className="w-4 h-4" />
-                            Proceed to Checkout
-                        </button>
-                    </div>
-                )}
-            </aside>
-
-            {/* Checkout Dialog Modal */}
-            {isCheckoutOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
-                    <div className="w-full max-w-md bg-slate-900 border border-white/10 rounded-3xl shadow-2xl overflow-hidden animate-scale-up">
-                        
-                        {/* Modal Header */}
-                        <div className="flex items-center justify-between px-6 py-4 border-b border-white/15 bg-slate-950/40">
-                            <div>
-                                <h3 className="font-extrabold text-white text-base">Kapruka Secure Checkout</h3>
-                                <p className="text-[10px] text-emerald-400 font-semibold flex items-center gap-1">
-                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" /> Encrypted Session
-                                </p>
-                            </div>
-                            {checkoutStep !== "payment" && (
-                                <button
-                                    onClick={() => setIsCheckoutOpen(false)}
-                                    className="p-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg"
-                                >
-                                    <X className="w-5 h-5" />
-                                </button>
-                            )}
-                        </div>
-
-                        {/* Modal Body */}
-                        {checkoutStep === "summary" && (
-                            <form onSubmit={handleCheckoutSubmit} className="p-6 space-y-4">
-                                <div className="space-y-3">
-                                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Recipient Details</h4>
-                                    
-                                    <div>
-                                        <label className="block text-[11px] text-slate-400 mb-1 font-semibold">Recipient Name</label>
-                                        <input
-                                            type="text"
-                                            value={recipientName}
-                                            onChange={(e) => setRecipientName(e.target.value)}
-                                            required
-                                            className="w-full px-3.5 py-2 text-sm bg-slate-950 border border-white/10 rounded-xl focus:outline-none focus:border-amber-500 text-white"
-                                        />
-                                    </div>
-
-                                    <div>
-                                        <label className="block text-[11px] text-slate-400 mb-1 font-semibold">Delivery Address</label>
-                                        <input
-                                            type="text"
-                                            value={deliveryAddress}
-                                            onChange={(e) => setDeliveryAddress(e.target.value)}
-                                            required
-                                            className="w-full px-3.5 py-2 text-sm bg-slate-950 border border-white/10 rounded-xl focus:outline-none focus:border-amber-500 text-white"
-                                        />
-                                    </div>
-                                </div>
-
-                                <div className="pt-2">
-                                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Package Contents</h4>
-                                    <div className="max-h-28 overflow-y-auto space-y-2 pr-1 scrollbar-thin">
-                                        {bundle.map((item) => (
-                                            <div key={item.id} className="flex justify-between items-center text-xs py-1.5 border-b border-white/5">
-                                                <span className="text-slate-300 truncate max-w-[280px]">{item.name}</span>
-                                                <span className="font-semibold text-slate-100">Rs. {item.price.toLocaleString()}</span>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-
-                                <div className="pt-3 border-t border-white/10 flex justify-between items-center">
-                                    <span className="text-sm text-slate-400 font-semibold">Total Amount</span>
-                                    <span className="text-xl font-black text-amber-400">Rs. {bundleTotal.toLocaleString()}</span>
-                                </div>
-
-                                <button
-                                    type="submit"
-                                    className="w-full py-3 bg-gradient-to-r from-amber-500 to-rose-500 hover:from-amber-600 hover:to-rose-600 active:scale-95 text-white font-extrabold text-sm rounded-xl shadow-lg transition-all"
-                                >
-                                    Proceed to Payment
-                                </button>
-                            </form>
-                        )}
-
-                        {checkoutStep === "payment" && (
-                            <div className="p-8 text-center flex flex-col items-center justify-center space-y-4">
-                                <div className="w-12 h-12 border-4 border-amber-500 border-t-transparent rounded-full animate-spin" />
-                                <div>
-                                    <h4 className="font-bold text-white text-base">Processing Payment...</h4>
-                                    <p className="text-xs text-slate-400 mt-1">Contacting Kapruka checkout gateway securely.</p>
-                                </div>
-                            </div>
-                        )}
-
-                        {checkoutStep === "success" && (
-                            <div className="p-8 text-center flex flex-col items-center justify-center space-y-4">
-                                <div className="w-14 h-14 rounded-full bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
-                                    <Check className="w-8 h-8" />
-                                </div>
-                                <div>
-                                    <h4 className="font-extrabold text-white text-base">Payment Completed Successfully!</h4>
-                                    <p className="text-xs text-slate-400 mt-1">
-                                        Your order has been authorized and dispatched to packing.
-                                    </p>
-                                </div>
-                                <button
-                                    onClick={() => setIsCheckoutOpen(false)}
-                                    className="px-6 py-2.5 bg-white/5 border border-white/10 hover:bg-white/10 active:scale-95 text-xs font-bold rounded-lg transition-all"
-                                >
-                                    Return to Chat
-                                </button>
-                            </div>
-                        )}
-
-                    </div>
-                </div>
-            )}
-
-            {/* Right Sliding Panel for Judge Mode */}
-            {isJudgeMode && (
-                <JudgePanel 
-                    data={selectedTraceData} 
-                    onClose={() => setIsJudgeMode(false)} 
-                />
-            )}
-        </div>
+      <div className="flex-1 h-screen bg-slate-50 flex flex-col items-center justify-center">
+        <BrainCircuit className="w-12 h-12 text-violet-600 animate-pulse" />
+        <span className="text-xs text-slate-400 font-bold mt-2">Loading Kappy...</span>
+      </div>
     );
-}
+  }
 
+  return (
+    <div className="relative flex flex-col md:flex-row h-screen bg-slate-50 overflow-hidden text-slate-800 font-sans">
+      
+      {/* 1. Splash Screen Overlay */}
+      {showSplash && (
+        <div className={`fixed inset-0 z-50 flex flex-col items-center justify-center bg-white transition-opacity duration-300 ${splashFading ? "opacity-0" : "opacity-100"}`}>
+          <div className="flex flex-col items-center gap-4 animate-scale-up">
+            <div className="w-20 h-20 rounded-3xl bg-gradient-to-tr from-amber-400 to-rose-500 shadow-xl shadow-rose-100 flex items-center justify-center">
+              <span className="font-black text-4xl text-white">K</span>
+            </div>
+            <div className="text-center">
+              <h1 className="text-2xl font-black tracking-tight text-slate-800">Kappy</h1>
+              <p className="text-xs text-slate-400 font-extrabold uppercase tracking-widest mt-1">Powered by Kapruka</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Auth Screen Overlay */}
+      {!user && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+          <div className="relative z-10 flex flex-col items-center bg-white p-8 rounded-3xl border border-slate-100 shadow-2xl max-w-sm w-full text-center animate-scale-up">
+            <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-amber-400 to-rose-500 shadow-lg flex items-center justify-center mb-5">
+              <span className="font-black text-2xl text-white">K</span>
+            </div>
+            <h2 className="text-xl font-extrabold text-slate-800 mb-2">Welcome to Kappy AI</h2>
+            <p className="text-slate-400 text-xs mb-6 leading-relaxed">
+              Sign in to sync your relationship memories, budget preferences, and access the secure Kapruka gateway.
+            </p>
+            <button
+              onClick={() => supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: `${window.location.origin}/auth/callback` } })}
+              className="w-full flex items-center justify-center gap-2.5 py-3 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl transition-all cursor-pointer shadow-md active:scale-95 text-sm"
+            >
+              Sign in with Google
+            </button>
+            <button
+              onClick={() => setUser({ id: "guest-123", email: "guest@kapruka.com" } as User)}
+              className="mt-3.5 w-full py-3 bg-transparent border border-slate-200 text-slate-600 font-semibold rounded-xl hover:bg-slate-50 transition-all cursor-pointer active:scale-95 text-xs"
+            >
+              Continue as Guest
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 2. Side Navigation Panel (Tablet & Desktop Layout) */}
+      <aside className="hidden md:flex flex-col w-64 bg-white border-r border-slate-100 h-full z-20">
+        <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-amber-400 to-rose-500 flex items-center justify-center text-white font-black text-base shadow-sm">
+              K
+            </div>
+            <div>
+              <h1 className="font-extrabold text-slate-800 text-sm leading-none">Kappy</h1>
+              <span className="text-[10px] text-slate-400 font-bold">Powered by Kapruka</span>
+            </div>
+          </div>
+          <button
+            onClick={() => setIsJudgeMode(!isJudgeMode)}
+            className={`p-1.5 rounded-lg border transition-all ${isJudgeMode ? "bg-amber-500/10 border-amber-400 text-amber-500" : "bg-slate-50 border-slate-200 text-slate-400 hover:text-slate-600"}`}
+            title="Judge Panel"
+          >
+            <Activity className="w-3.5 h-3.5" />
+          </button>
+        </div>
+
+        {/* Tab Items */}
+        <nav className="flex-1 p-4 space-y-1">
+          <button
+            onClick={() => setActiveTab("home")}
+            className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl font-bold text-sm transition-all ${activeTab === "home" ? "bg-violet-50 text-violet-700 shadow-sm" : "text-slate-500 hover:bg-slate-50 hover:text-slate-700"}`}
+          >
+            <HomeIcon className="w-4 h-4" /> Home
+          </button>
+          <button
+            onClick={() => setActiveTab("build-gift")}
+            className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl font-bold text-sm transition-all ${activeTab === "build-gift" ? "bg-violet-50 text-violet-700 shadow-sm" : "text-slate-500 hover:bg-slate-50 hover:text-slate-700"}`}
+          >
+            <Gift className="w-4 h-4" /> Build Gift
+          </button>
+          <button
+            onClick={() => setActiveTab("chat")}
+            className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl font-bold text-sm transition-all ${activeTab === "chat" ? "bg-violet-50 text-violet-700 shadow-sm" : "text-slate-500 hover:bg-slate-50 hover:text-slate-700"}`}
+          >
+            <MessageSquare className="w-4 h-4" /> Chat
+          </button>
+          <button
+            onClick={() => setActiveTab("memory")}
+            className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl font-bold text-sm transition-all ${activeTab === "memory" ? "bg-violet-50 text-violet-700 shadow-sm" : "text-slate-500 hover:bg-slate-50 hover:text-slate-700"}`}
+          >
+            <Users className="w-4 h-4" /> Relationship Memory
+          </button>
+          <button
+            onClick={() => setActiveTab("profile")}
+            className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl font-bold text-sm transition-all ${activeTab === "profile" ? "bg-violet-50 text-violet-700 shadow-sm" : "text-slate-500 hover:bg-slate-50 hover:text-slate-700"}`}
+          >
+            <UserIcon className="w-4 h-4" /> Profile
+          </button>
+        </nav>
+
+        {/* Desktop Chat History List */}
+        {activeTab === "chat" && conversations.length > 0 && (
+          <div className="p-4 border-t border-slate-100 max-h-48 overflow-y-auto">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-2">Previous Chats</span>
+            <div className="space-y-1">
+              {conversations.map(c => (
+                <div 
+                  key={c.id}
+                  onClick={() => setActiveConversationId(c.id)}
+                  className={`group flex items-center justify-between p-2 rounded-lg text-xs cursor-pointer ${activeConversationId === c.id ? "bg-slate-100 font-bold" : "text-slate-500 hover:bg-slate-50"}`}
+                >
+                  <span className="truncate flex-1 pr-1">{c.title}</span>
+                  <button
+                    onClick={(e) => handleDeleteConversation(c.id, e)}
+                    className="opacity-0 group-hover:opacity-100 text-rose-500 hover:bg-rose-50 p-0.5 rounded"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="p-4 border-t border-slate-100 bg-slate-50/50">
+          <div className="flex items-center gap-2">
+            <img 
+              src={user?.user_metadata?.avatar_url || "https://www.gravatar.com/avatar/?d=mp"} 
+              alt="Avatar" 
+              className="w-8 h-8 rounded-full border border-slate-200" 
+            />
+            <div className="flex-1 min-w-0">
+              <span className="text-xs font-bold text-slate-700 block truncate">{user?.email || "Guest"}</span>
+              <button 
+                onClick={() => supabase.auth.signOut()}
+                className="text-[10px] text-slate-400 font-semibold hover:underline block text-left"
+              >
+                Log Out
+              </button>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      {/* 3. Main Screen View Shell */}
+      <div className="flex-1 flex flex-col h-full overflow-hidden relative">
+        
+        {/* Responsive Header Bar */}
+        <header className="shrink-0 flex items-center justify-between px-5 py-3 bg-white border-b border-slate-100">
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-amber-400 to-rose-500 flex md:hidden items-center justify-center text-white font-black text-sm shadow-sm">
+              K
+            </div>
+            <div>
+              <span className="font-extrabold text-slate-800 text-sm md:text-base tracking-tight capitalize block md:inline">
+                {activeTab === "build-gift" ? "🎁 Build Gift" : activeTab === "memory" ? "❤️ Relationship Memory" : activeTab}
+              </span>
+              <span className="text-[10px] text-slate-400 font-bold md:hidden block">Powered by Kapruka</span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {activeMemories.length > 0 && activeTab === "chat" && (
+              <div className="hidden lg:flex items-center gap-1 bg-violet-50 border border-violet-100 rounded-xl px-2.5 py-1">
+                <span className="text-[10px] font-bold text-violet-700 flex items-center gap-1">
+                  <BrainCircuit className="w-3 h-3" /> Context:
+                </span>
+                <span className="text-[10px] text-violet-600 font-bold truncate max-w-[120px]">
+                  {activeMemories.join(", ")}
+                </span>
+              </div>
+            )}
+
+            <button
+              onClick={() => setIsJudgeMode(!isJudgeMode)}
+              className={`p-2 rounded-xl border transition-all ${isJudgeMode ? "bg-amber-500/10 border-amber-450 text-amber-500" : "bg-slate-50 border-slate-200 text-slate-400 hover:text-slate-600"}`}
+              title="Judge Mode"
+            >
+              <Activity className="w-4 h-4" />
+            </button>
+
+            <button
+              onClick={() => setIsDebugMode(!isDebugMode)}
+              className={`p-2 rounded-xl border transition-all ${isDebugMode ? "bg-violet-50 text-violet-600 border-violet-200" : "bg-slate-50 border-slate-200 text-slate-400 hover:text-slate-600"}`}
+              title="Dev Mode"
+            >
+              <BrainCircuit className="w-4 h-4" />
+            </button>
+
+            {/* Hamper indicator toggler */}
+            <button
+              onClick={() => setIsBundleOpen(!isBundleOpen)}
+              className="relative p-2 text-slate-500 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl active:scale-95"
+            >
+              <ShoppingBag className="w-4 h-4" />
+              {bundle.length > 0 && (
+                <span className="absolute -top-1 -right-1 flex items-center justify-center w-5 h-5 bg-rose-500 text-white text-[10px] font-black rounded-full border-2 border-white">
+                  {bundle.length}
+                </span>
+              )}
+            </button>
+          </div>
+        </header>
+
+        {/* 4. Tab Body Content */}
+        <div className="flex-1 overflow-y-auto scrollbar-thin">
+          
+          {/* HOME TAB VIEW */}
+          {activeTab === "home" && (
+            <div className="p-5 max-w-lg mx-auto space-y-6 animate-fade-in">
+              {/* Header Profile Greeting */}
+              <div className="pt-2">
+                <h2 className="text-xl font-bold text-slate-400">👋 Hi {user?.email ? user.email.split('@')[0] : "Guest"}</h2>
+                <h1 className="text-2xl font-black text-slate-900 tracking-tight leading-tight mt-1">What are we shopping for today?</h1>
+              </div>
+
+              {/* Single Hero CTA Input */}
+              <div className="relative">
+                <div className="flex items-center gap-2 p-1.5 bg-white border border-slate-200/80 rounded-2xl shadow-sm focus-within:border-violet-500 focus-within:ring-2 focus-within:ring-violet-200/50 transition-all duration-300">
+                  <div className="flex-1 px-3 py-2.5">
+                    <input
+                      type="text"
+                      placeholder="Describe your situation... (e.g. birthday gift)"
+                      className="w-full bg-transparent text-slate-800 placeholder-slate-400 focus:outline-none text-sm md:text-base font-semibold"
+                      value={voiceInputText}
+                      onChange={(e) => setVoiceInputText(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && voiceInputText.trim()) {
+                          setActiveTab("chat");
+                          handleSendMessage(voiceInputText);
+                          setVoiceInputText("");
+                        }
+                      }}
+                    />
+                  </div>
+                  <button
+                    onClick={handleMicClick}
+                    className={`p-3 rounded-xl transition-all ${isVoiceSimulating ? "bg-rose-500 text-white animate-pulse" : "bg-slate-100 hover:bg-slate-200 text-slate-500"}`}
+                  >
+                    <Mic className="w-5 h-5" />
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (voiceInputText.trim()) {
+                        setActiveTab("chat");
+                        handleSendMessage(voiceInputText);
+                        setVoiceInputText("");
+                      }
+                    }}
+                    className="p-3 bg-gradient-to-r from-amber-500 to-rose-500 hover:from-amber-600 hover:to-rose-600 text-white rounded-xl shadow-md transition-all active:scale-95"
+                  >
+                    <ArrowRight className="w-5 h-5" />
+                  </button>
+                </div>
+
+                {/* Simulated Voice wave overlay */}
+                {isVoiceSimulating && (
+                  <div className="absolute inset-0 bg-white/95 flex items-center justify-center gap-3 rounded-2xl px-4 border border-rose-400 animate-fade-in">
+                    <div className="flex gap-1 items-center justify-center">
+                      <span className="w-1.5 h-6 bg-rose-500 rounded-full animate-bounce [animation-delay:-0.4s]" />
+                      <span className="w-1.5 h-9 bg-rose-500 rounded-full animate-bounce [animation-delay:-0.2s]" />
+                      <span className="w-1.5 h-7 bg-rose-500 rounded-full animate-bounce [animation-delay:-0.3s]" />
+                      <span className="w-1.5 h-4 bg-rose-500 rounded-full animate-bounce" />
+                    </div>
+                    <span className="text-xs text-rose-600 font-extrabold italic animate-pulse">
+                      Dictating: "{voiceInputText || "..."}"
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Occasion Quick Shortcuts */}
+              <div className="space-y-2.5">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Occasions</span>
+                <div className="grid grid-cols-2 gap-2.5">
+                  <button
+                    onClick={() => {
+                      setActiveTab("chat");
+                      handleSendMessage("🎂 Birthday gift options under LKR 5000");
+                    }}
+                    className="flex items-center gap-3 p-3 bg-white border border-slate-100 rounded-xl hover:border-violet-300 hover:bg-violet-50/20 text-slate-700 font-bold transition-all text-xs text-left shadow-sm active:scale-95"
+                  >
+                    <span className="text-lg">🎂</span> Birthday
+                  </button>
+                  <button
+                    onClick={() => {
+                      setActiveTab("chat");
+                      handleSendMessage("❤️ Anniversary package for my spouse");
+                    }}
+                    className="flex items-center gap-3 p-3 bg-white border border-slate-100 rounded-xl hover:border-violet-300 hover:bg-violet-50/20 text-slate-700 font-bold transition-all text-xs text-left shadow-sm active:scale-95"
+                  >
+                    <span className="text-lg">❤️</span> Anniversary
+                  </button>
+                  <button
+                    onClick={() => {
+                      setActiveTab("chat");
+                      handleSendMessage("🎓 Graduation congrats hamper");
+                    }}
+                    className="flex items-center gap-3 p-3 bg-white border border-slate-100 rounded-xl hover:border-violet-300 hover:bg-violet-50/20 text-slate-700 font-bold transition-all text-xs text-left shadow-sm active:scale-95"
+                  >
+                    <span className="text-lg">🎓</span> Graduation
+                  </button>
+                  <button
+                    onClick={() => {
+                      setActiveTab("chat");
+                      handleSendMessage("👶 Baby Shower gift items list");
+                    }}
+                    className="flex items-center gap-3 p-3 bg-white border border-slate-100 rounded-xl hover:border-violet-300 hover:bg-violet-50/20 text-slate-700 font-bold transition-all text-xs text-left shadow-sm active:scale-95"
+                  >
+                    <span className="text-lg">👶</span> Baby Shower
+                  </button>
+                </div>
+              </div>
+
+              {/* Popular Bundles Section (Replaces Trending Products) */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Popular Bundles</span>
+                  <button onClick={() => setActiveTab("build-gift")} className="text-[10px] text-violet-600 font-bold hover:underline">Customize ✨</button>
+                </div>
+                <div className="space-y-3">
+                  {[
+                    { name: "Romantic Surprise Hamper", price: 4850, image: "https://images.unsplash.com/photo-1549007994-cb92ca88806f?w=400&q=80", tag: "Roses + Chocolate + Card", delivery: "🚚 Same Day Delivery" },
+                    { name: "Celebration Birthday Basket", price: 7200, image: "https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?w=400&q=80", tag: "Cake + Balloons + Toys", delivery: "🚚 Arrives Today" }
+                  ].map((hamp, idx) => (
+                    <div key={idx} className="flex gap-3 bg-white border border-slate-100 rounded-2xl p-3 shadow-sm hover:shadow-md transition-all">
+                      <img src={hamp.image} alt={hamp.name} className="w-16 h-16 object-cover rounded-xl border border-slate-100" />
+                      <div className="flex-1 min-w-0 flex flex-col justify-between">
+                        <div>
+                          <h4 className="font-bold text-slate-800 text-xs md:text-sm truncate">{hamp.name}</h4>
+                          <p className="text-[10px] text-slate-400 font-semibold mt-0.5">{hamp.tag}</p>
+                        </div>
+                        <div className="flex items-center justify-between mt-1.5">
+                          <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded">{hamp.delivery}</span>
+                          <span className="text-xs font-black text-rose-600">LKR {hamp.price}</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Fast Delivery Today section */}
+              <div className="space-y-3">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Today's Fast Delivery</span>
+                <div className="grid grid-cols-2 gap-3">
+                  {[
+                    { name: "Delicious Chocolate Gateau Cake", price: 3200, image: "https://images.unsplash.com/photo-1578985545062-69928b1d9587?w=300&q=80", delay: "2 Hours" },
+                    { name: "Fresh Red Roses Bunch", price: 2200, image: "https://images.unsplash.com/photo-1561181286-d3fee7d55364?w=300&q=80", delay: "3 Hours" }
+                  ].map((prod, idx) => (
+                    <div key={idx} className="bg-white border border-slate-100 rounded-2xl p-2.5 shadow-sm">
+                      <div className="relative h-28 w-full rounded-xl overflow-hidden bg-slate-50">
+                        <img src={prod.image} alt={prod.name} className="w-full h-full object-cover" />
+                        <span className="absolute bottom-1.5 left-1.5 bg-emerald-500 text-white font-extrabold text-[9px] px-1.5 py-0.5 rounded shadow-sm">
+                          ⚡ {prod.delay}
+                        </span>
+                      </div>
+                      <h5 className="font-bold text-slate-800 text-xs mt-2 truncate">{prod.name}</h5>
+                      <p className="text-xs font-extrabold text-slate-500 mt-0.5">LKR {prod.price}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Trust badges footer */}
+              <div className="pt-4 border-t border-slate-100 flex justify-between items-center gap-2 text-[10px] text-slate-400 font-bold text-center">
+                <div className="flex-1 flex flex-col items-center gap-1">
+                  <ShieldCheck className="w-5 h-5 text-emerald-500" />
+                  <span>100% Delivery Certainty</span>
+                </div>
+                <div className="flex-1 flex flex-col items-center gap-1">
+                  <Truck className="w-5 h-5 text-indigo-500" />
+                  <span>Real-time Tracking</span>
+                </div>
+                <div className="flex-1 flex flex-col items-center gap-1">
+                  <Sparkles className="w-5 h-5 text-amber-500" />
+                  <span>AI Selection Verified</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* BUILD GIFT TAB VIEW */}
+          {activeTab === "build-gift" && (
+            <div className="p-5 max-w-lg mx-auto space-y-5 animate-fade-in">
+              <div className="bg-white border border-slate-100 rounded-3xl p-5 shadow-sm space-y-4">
+                <h3 className="font-extrabold text-slate-800 text-base flex items-center gap-1.5">
+                  <span className="p-1 bg-gradient-to-tr from-amber-400 to-rose-500 text-white rounded-lg"><Gift className="w-4 h-4" /></span>
+                  AI Hamper Package Optimizer
+                </h3>
+
+                {/* Recipient selectors */}
+                <div className="space-y-2">
+                  <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">Recipient</label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {["girlfriend", "father", "mother", "friend"].map(type => (
+                      <button
+                        key={type}
+                        onClick={() => setBuilderRecipient(type)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold capitalize transition-all border ${builderRecipient === type ? "bg-violet-600 text-white border-violet-600" : "bg-slate-50 border-slate-200 text-slate-600"}`}
+                      >
+                        {type === "girlfriend" ? "Girlfriend (Nethmi)" : type === "father" ? "Dad" : type}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Occasion selectors */}
+                <div className="space-y-2">
+                  <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">Occasion</label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {["Birthday", "Anniversary", "General"].map(occ => (
+                      <button
+                        key={occ}
+                        onClick={() => setBuilderOccasion(occ)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all border ${builderOccasion === occ ? "bg-violet-600 text-white border-violet-600" : "bg-slate-50 border-slate-200 text-slate-600"}`}
+                      >
+                        {occ}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Budget Slider */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Target Budget</label>
+                    <span className="text-base font-black text-rose-600">LKR {builderBudget.toLocaleString()}</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="1500"
+                    max="15000"
+                    step="500"
+                    value={builderBudget}
+                    onChange={(e) => setBuilderBudget(parseInt(e.target.value))}
+                    className="w-full accent-rose-500 h-1.5 bg-slate-100 rounded-lg cursor-pointer"
+                  />
+                  <div className="flex justify-between text-[10px] text-slate-400 font-bold">
+                    <span>LKR 1,500</span>
+                    <span>LKR 15,000</span>
+                  </div>
+                </div>
+
+                {/* Optimiser Actions */}
+                <button
+                  onClick={handleOptimizeHamper}
+                  disabled={isOptimizing}
+                  className="w-full flex items-center justify-center gap-2 py-3 bg-violet-600 hover:bg-violet-700 active:scale-95 disabled:bg-slate-200 text-white font-extrabold text-sm rounded-2xl shadow-md cursor-pointer transition-all"
+                >
+                  {isOptimizing ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      Kappy is balancing weights...
+                    </>
+                  ) : (
+                    <>
+                      <BrainCircuit className="w-4 h-4" />
+                      Kappy Optimize Bundle
+                    </>
+                  )}
+                </button>
+
+                {optimizationReason && (
+                  <div className="p-3 bg-emerald-50/50 border border-emerald-100/50 rounded-2xl text-xs text-emerald-700 font-medium animate-slide-down flex items-start gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
+                    <span>{optimizationReason}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Hamper Package Contents */}
+              <div className="bg-white border border-slate-100 rounded-3xl p-5 shadow-sm space-y-4">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Optimized Package Contents</span>
+                <div className="space-y-3">
+                  {builderItems.map((item, idx) => (
+                    <div key={idx} className="flex gap-3 items-center justify-between p-2.5 bg-slate-50/50 border border-slate-100 rounded-xl">
+                      <div className="flex gap-2 items-center">
+                        <img src={item.image} alt={item.name} className="w-10 h-10 object-cover rounded-lg border border-slate-100 bg-white" />
+                        <div className="min-w-0">
+                          <h4 className="font-bold text-slate-800 text-xs truncate max-w-[180px]">{item.name}</h4>
+                          <span className="text-[10px] text-slate-400 font-bold">LKR {item.price.toLocaleString()}</span>
+                        </div>
+                      </div>
+                      <div className="flex gap-2 items-center">
+                        <span className="text-[9px] font-bold bg-emerald-50 text-emerald-600 px-1.5 py-0.5 rounded border border-emerald-100">🚚 Today</span>
+                        <input
+                          type="checkbox"
+                          checked={item.selected}
+                          onChange={(e) => {
+                            setBuilderItems(prev => prev.map((itm, i) => i === idx ? { ...itm, selected: e.target.checked } : itm));
+                          }}
+                          className="w-4.5 h-4.5 accent-violet-600 cursor-pointer"
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="pt-3 border-t border-slate-100 flex justify-between items-center text-sm">
+                  <span className="text-slate-400 font-bold">Total Bundle Price</span>
+                  <span className="text-lg font-black text-rose-600">
+                    LKR {builderItems.filter(i => i.selected).reduce((sum, i) => sum + i.price, 0).toLocaleString()}
+                  </span>
+                </div>
+
+                <button
+                  disabled={builderItems.filter(i => i.selected).length === 0}
+                  onClick={() => {
+                    const selected = builderItems.filter(i => i.selected);
+                    // Add items to checkout bundle state
+                    setBundle(selected.map(item => ({
+                      id: item.id,
+                      name: item.name,
+                      price: item.price,
+                      image_url: item.image,
+                      url: "#",
+                      delivery: "Today"
+                    })));
+                    setIsCheckoutOpen(true);
+                    setCheckoutStep("summary");
+                  }}
+                  className="w-full flex items-center justify-center gap-2 py-3 bg-gradient-to-r from-amber-500 to-rose-500 hover:from-amber-600 hover:to-rose-600 active:scale-95 disabled:from-slate-200 text-white font-extrabold text-sm rounded-2xl shadow-md transition-all cursor-pointer"
+                >
+                  <CreditCard className="w-4 h-4" />
+                  Proceed to Secure Checkout
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* CHAT TAB VIEW */}
+          {activeTab === "chat" && (
+            <div className="flex flex-col h-full bg-slate-50 relative">
+              <div ref={scrollContainerRef} className="flex-1 overflow-y-auto px-5 py-5 space-y-4 scrollbar-thin">
+                {messages.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-full text-center p-6 text-slate-400">
+                    <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-amber-400 to-rose-500 flex items-center justify-center text-white font-black text-lg mb-3 shadow-md">K</div>
+                    <h3 className="font-bold text-sm text-slate-700">Chat with Kappy</h3>
+                    <p className="text-xs text-slate-400 max-w-xs mt-1 leading-relaxed">
+                      Describe your gifting requirement, budget, or enter tracking details. E.g. "Gift for Nethmi under 5000"
+                    </p>
+                  </div>
+                ) : (
+                  messages.map((msg, i) => (
+                    <div 
+                      key={msg.id}
+                      onClick={() => {
+                        if (isJudgeMode) {
+                          setSelectedTraceData({
+                            traceReport: msg.traceReport,
+                            intelligenceTrace: msg.judgeModeTrace,
+                            message: msg.content
+                          });
+                        }
+                      }}
+                      className={isJudgeMode ? "cursor-pointer hover:bg-slate-100/50 rounded-xl p-1 -mx-1" : ""}
+                    >
+                      <ChatMessage
+                        message={msg}
+                        isDebugMode={isDebugMode}
+                        userId={user?.id}
+                        sessionId={activeConversationId}
+                        onAddToBundle={addToBundle}
+                        onFollowUpClick={(text) => handleSendMessage(text)}
+                      />
+                    </div>
+                  ))
+                )}
+
+                {isTyping && (
+                  <ChatMessage
+                    message={{
+                      id: "typing",
+                      role: "assistant",
+                      content: "",
+                      isLoading: true,
+                      loadingText: typingText
+                    }}
+                  />
+                )}
+              </div>
+
+              {/* Chat tab bottom input */}
+              <div className="p-4 bg-white border-t border-slate-100">
+                <ChatInput onSendMessage={handleSendMessage} disabled={isTyping} placeholder="Ask Kappy..." />
+              </div>
+            </div>
+          )}
+
+          {/* RELATIONSHIP MEMORY TAB VIEW */}
+          {activeTab === "memory" && (
+            <div className="p-5 max-w-lg mx-auto space-y-5 animate-fade-in">
+              <div className="flex justify-between items-center">
+                <div>
+                  <h3 className="text-base font-extrabold text-slate-800">My Relationships</h3>
+                  <p className="text-[10px] text-slate-400 font-bold">Kappy's relational memory system</p>
+                </div>
+                <button
+                  onClick={() => setShowAddPersonModal(true)}
+                  className="flex items-center gap-1 px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white font-bold text-xs rounded-xl shadow-sm cursor-pointer transition-all active:scale-95"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Add Person
+                </button>
+              </div>
+
+              {/* Loading indicator */}
+              {isLoadingRelationships && (
+                <div className="flex justify-center py-6 text-slate-400 text-xs font-bold gap-2">
+                  <RefreshCw className="w-4 h-4 animate-spin text-violet-600" />
+                  Updating relationship vault...
+                </div>
+              )}
+
+              {/* Empty state & Demo preloader */}
+              {!isLoadingRelationships && relationships.length === 0 && (
+                <div className="bg-white border border-slate-100 rounded-3xl p-6 text-center space-y-4 shadow-sm">
+                  <Users className="w-12 h-12 mx-auto opacity-20 text-violet-600" />
+                  <div>
+                    <h4 className="font-bold text-slate-700 text-sm">No Relationships Saved Yet</h4>
+                    <p className="text-xs text-slate-400 max-w-xs mx-auto mt-1 leading-relaxed">
+                      Saving relationships allows Kappy to remember birthdays, favorite colors, and likes for personalized recommendations.
+                    </p>
+                  </div>
+                  <div className="flex flex-col gap-2 pt-2">
+                    <button
+                      onClick={handlePreloadDemoData}
+                      className="w-full py-2.5 bg-violet-50 hover:bg-violet-100 text-violet-700 font-extrabold text-xs rounded-xl border border-violet-200 transition-all cursor-pointer"
+                    >
+                      🎁 Load Demo Data (Nethmi & Dad)
+                    </button>
+                    <button
+                      onClick={() => setShowAddPersonModal(true)}
+                      className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs rounded-xl transition-all cursor-pointer"
+                    >
+                      + Add Someone Custom
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Relationships grid list */}
+              {!isLoadingRelationships && relationships.length > 0 && (
+                <div className="space-y-4">
+                  {relationships.map(rel => {
+                    const relPrefs = preferences.filter(p => p.relationship_id === rel.id);
+                    return (
+                      <div key={rel.id} className="bg-white border border-slate-100 rounded-2xl p-4 shadow-sm space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xl">
+                              {rel.relationship_type === "girlfriend" ? "❤️" : rel.relationship_type === "father" ? "👨" : "👤"}
+                            </span>
+                            <div>
+                              <h4 className="font-extrabold text-slate-800 text-sm">{rel.nickname}</h4>
+                              <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider">{rel.relationship_type}</span>
+                            </div>
+                          </div>
+                          {rel.birthday && (
+                            <span className="text-[10px] font-bold text-violet-600 bg-violet-50 px-2 py-0.5 rounded-lg flex items-center gap-1">
+                              <Calendar className="w-3 h-3" /> {rel.birthday}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Interests / Preferences list */}
+                        {relPrefs.length > 0 && (
+                          <div className="space-y-1">
+                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Preferences Vault</span>
+                            <div className="flex flex-wrap gap-1.5">
+                              {relPrefs.map(pref => (
+                                <span key={pref.id} className="px-2 py-0.5 text-[10px] font-bold bg-slate-100 text-slate-600 rounded">
+                                  {pref.interest}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {rel.notes && (
+                          <div className="pt-2 border-t border-slate-100 text-[11px] text-slate-500 font-medium">
+                            <span className="font-bold text-slate-700">Insights:</span> {rel.notes}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* PROFILE TAB VIEW */}
+          {activeTab === "profile" && (
+            <div className="p-5 max-w-lg mx-auto space-y-5 animate-fade-in">
+              <div className="bg-white border border-slate-100 rounded-3xl p-5 shadow-sm space-y-4">
+                <h4 className="font-extrabold text-slate-800 text-sm border-b border-slate-100 pb-2">Shopping Profile</h4>
+                
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Tone Selection</label>
+                    <div className="flex gap-2">
+                      {["neutral", "singlish", "casual"].map(tone => (
+                        <button
+                          key={tone}
+                          onClick={() => setUserTone(tone)}
+                          className={`flex-1 py-1.5 rounded-lg border text-xs font-bold capitalize transition-all ${userTone === tone ? "bg-violet-600 text-white border-violet-600" : "bg-slate-50 border-slate-200 text-slate-600"}`}
+                        >
+                          {tone}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Preferred Language</label>
+                    <span className="text-xs font-bold text-slate-700 bg-slate-100 px-2 py-1 rounded">English / Singlish</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Order logs */}
+              <div className="bg-white border border-slate-100 rounded-3xl p-5 shadow-sm space-y-4">
+                <h4 className="font-extrabold text-slate-800 text-sm border-b border-slate-100 pb-2">Recent Orders</h4>
+                <div className="text-xs text-slate-400 text-center py-6 font-bold">
+                  No orders logged in this session yet. Build a bundle to place an order.
+                </div>
+              </div>
+            </div>
+          )}
+
+        </div>
+
+        {/* 5. Bottom Navigation Bar (Mobile / Tablet Layout) */}
+        <footer className="shrink-0 md:hidden bg-white border-t border-slate-100 flex justify-between items-center px-4 py-2.5 z-20">
+          <button
+            onClick={() => setActiveTab("home")}
+            className={`flex flex-col items-center gap-1 flex-1 py-1 ${activeTab === "home" ? "text-violet-600 font-extrabold" : "text-slate-400"}`}
+          >
+            <HomeIcon className="w-5 h-5" />
+            <span className="text-[10px] font-bold">Home</span>
+          </button>
+          <button
+            onClick={() => setActiveTab("build-gift")}
+            className={`flex flex-col items-center gap-1 flex-1 py-1 ${activeTab === "build-gift" ? "text-violet-600 font-extrabold" : "text-slate-400"}`}
+          >
+            <Gift className="w-5 h-5" />
+            <span className="text-[10px] font-bold">Build Gift</span>
+          </button>
+          <button
+            onClick={() => setActiveTab("chat")}
+            className={`flex flex-col items-center gap-1 flex-1 py-1 ${activeTab === "chat" ? "text-violet-600 font-extrabold" : "text-slate-400"}`}
+          >
+            <MessageSquare className="w-5 h-5" />
+            <span className="text-[10px] font-bold">Chat</span>
+          </button>
+          <button
+            onClick={() => setActiveTab("memory")}
+            className={`flex flex-col items-center gap-1 flex-1 py-1 ${activeTab === "memory" ? "text-violet-600 font-extrabold" : "text-slate-400"}`}
+          >
+            <Users className="w-5 h-5" />
+            <span className="text-[10px] font-bold">Memory</span>
+          </button>
+          <button
+            onClick={() => setActiveTab("profile")}
+            className={`flex flex-col items-center gap-1 flex-1 py-1 ${activeTab === "profile" ? "text-violet-600 font-extrabold" : "text-slate-400"}`}
+          >
+            <UserIcon className="w-5 h-5" />
+            <span className="text-[10px] font-bold">Profile</span>
+          </button>
+        </footer>
+      </div>
+
+      {/* 6. Bundle / Hamper Sidebar Drawer (Desktop View / Collapsible) */}
+      <aside
+        className={`h-full bg-white border-l border-slate-100 flex flex-col transition-all duration-500 relative z-20 ${
+          isBundleOpen 
+            ? "w-full md:w-[350px] fixed inset-y-0 right-0 md:relative md:flex" 
+            : "w-0 md:w-0 overflow-hidden border-none fixed inset-y-0 right-[-100%] md:relative"
+        }`}
+      >
+        <div className="flex items-center justify-between px-5 py-4 bg-slate-50 border-b border-slate-100">
+          <div className="flex items-center gap-2">
+            <span className="p-1.5 bg-gradient-to-tr from-amber-400 to-rose-500 text-white rounded-lg"><Gift className="w-4 h-4" /></span>
+            <h2 className="font-extrabold text-slate-800 text-sm">Hamper Package Details</h2>
+          </div>
+          <button
+            onClick={() => setIsBundleOpen(false)}
+            className="md:hidden p-1.5 text-slate-400 hover:text-slate-600 rounded-lg"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+          {bundle.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full text-center p-6 text-slate-400">
+              <ShoppingBag className="w-10 h-10 mb-2.5 opacity-20 text-rose-500 animate-pulse" />
+              <h4 className="font-bold text-xs text-slate-700">Hamper Package is Empty</h4>
+              <p className="text-[11px] text-slate-400 max-w-xs mt-1 leading-relaxed">
+                Add recommended products or custom items to pack into a surprise hamper box.
+              </p>
+            </div>
+          ) : (
+            bundle.map(item => (
+              <div
+                key={item.id}
+                className="flex gap-3 p-3 bg-slate-50 border border-slate-100 rounded-xl relative group transition-all"
+              >
+                <img src={item.image_url} alt={item.name} className="w-12 h-12 object-cover rounded-lg border border-slate-200 bg-white" />
+                <div className="flex-1 min-w-0">
+                  <h4 className="font-bold text-slate-800 text-xs truncate">{item.name}</h4>
+                  <div className="flex items-center justify-between mt-1">
+                    <span className="text-[10px] text-rose-600 font-extrabold">LKR {item.price.toLocaleString()}</span>
+                    <button
+                      onClick={() => removeFromBundle(item.id)}
+                      className="text-[10px] text-rose-500 font-bold hover:underline"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
+        {bundle.length > 0 && (
+          <div className="p-5 bg-slate-50 border-t border-slate-100 space-y-3">
+            <div className="flex justify-between items-center text-xs">
+              <span className="text-slate-500 font-bold">Hamper Subtotal</span>
+              <span className="text-base font-black text-rose-600">LKR {bundleTotal.toLocaleString()}</span>
+            </div>
+            <button
+              onClick={() => {
+                setIsCheckoutOpen(true);
+                setCheckoutStep("summary");
+              }}
+              className="w-full py-3 bg-gradient-to-r from-amber-500 to-rose-500 hover:from-amber-600 hover:to-rose-600 text-white font-black text-xs rounded-xl shadow-md transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-1.5"
+            >
+              <CreditCard className="w-4 h-4" /> Proceed to Checkout
+            </button>
+          </div>
+        )}
+      </aside>
+
+      {/* 7. Relationship Manager Modal */}
+      {showAddPersonModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+          <form onSubmit={handleAddRelationship} className="w-full max-w-sm bg-white border border-slate-100 rounded-3xl shadow-2xl overflow-hidden animate-scale-up">
+            <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+              <h3 className="font-extrabold text-slate-800 text-sm">Add Someone Important</h3>
+              <button type="button" onClick={() => setShowAddPersonModal(false)} className="p-1 text-slate-400 hover:text-slate-600"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="p-5 space-y-3">
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Relationship Profile</label>
+                <select
+                  value={newPersonType}
+                  onChange={(e) => setNewPersonType(e.target.value)}
+                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-violet-500 text-slate-700 font-bold"
+                >
+                  <option value="girlfriend">Girlfriend</option>
+                  <option value="boyfriend">Boyfriend</option>
+                  <option value="mother">Mother</option>
+                  <option value="father">Father</option>
+                  <option value="spouse">Spouse</option>
+                  <option value="friend">Friend</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Nickname / Name</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Nethmi, Dad"
+                  value={newPersonName}
+                  onChange={(e) => setNewPersonName(e.target.value)}
+                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-violet-500 text-slate-800 font-bold"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Birthday</label>
+                <input
+                  type="text"
+                  placeholder="e.g. 12 October, 15 June"
+                  value={newPersonBirthday}
+                  onChange={(e) => setNewPersonBirthday(e.target.value)}
+                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-violet-500 text-slate-800 font-bold"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Likes / Preferences (comma separated)</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Pink, Chocolate, Technology"
+                  value={newPersonInterests}
+                  onChange={(e) => setNewPersonInterests(e.target.value)}
+                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-violet-500 text-slate-800 font-bold"
+                />
+              </div>
+            </div>
+            <div className="px-5 py-3 border-t border-slate-100 bg-slate-50 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowAddPersonModal(false)}
+                className="px-4 py-2 border border-slate-200 hover:bg-slate-100 text-slate-600 font-bold rounded-xl text-xs"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white font-bold rounded-xl text-xs"
+              >
+                Save Vault
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* 8. Checkout Dialog Modal */}
+      {isCheckoutOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+          <div className="w-full max-w-sm bg-white border border-slate-100 rounded-3xl shadow-2xl overflow-hidden animate-scale-up text-slate-800">
+            
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 bg-slate-50">
+              <div>
+                <h3 className="font-extrabold text-slate-800 text-sm">Secure Kapruka Gateway</h3>
+                <span className="text-[9px] text-emerald-600 font-bold flex items-center gap-1 mt-0.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" /> 256-Bit SSL Encryption
+                </span>
+              </div>
+              {checkoutStep !== "payment" && (
+                <button onClick={() => setIsCheckoutOpen(false)} className="p-1 text-slate-400 hover:text-slate-600"><X className="w-5 h-5" /></button>
+              )}
+            </div>
+
+            {checkoutStep === "summary" && (
+              <form onSubmit={handleCheckoutSubmit} className="p-5 space-y-4">
+                <div className="space-y-2.5">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Delivery Destination</span>
+                  
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Recipient Name</label>
+                    <input
+                      type="text"
+                      value={recipientName}
+                      onChange={(e) => setRecipientName(e.target.value)}
+                      required
+                      className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-violet-500 text-slate-800 font-bold"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Delivery Address</label>
+                    <input
+                      type="text"
+                      value={deliveryAddress}
+                      onChange={(e) => setDeliveryAddress(e.target.value)}
+                      required
+                      className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-violet-500 text-slate-800 font-bold"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Gift Card Greeting Message</label>
+                    <textarea
+                      value={giftMessageText}
+                      onChange={(e) => setGiftMessageText(e.target.value)}
+                      required
+                      rows={2}
+                      className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-violet-500 text-slate-800 font-medium leading-relaxed"
+                    />
+                  </div>
+                </div>
+
+                <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-3 flex justify-between items-center text-xs">
+                  <div className="flex gap-1.5 items-center">
+                    <Truck className="w-4 h-4 text-emerald-600" />
+                    <span className="text-emerald-800 font-bold">Delivery Estimate:</span>
+                  </div>
+                  <span className="font-extrabold text-emerald-700">🚚 Today (Before 6 PM)</span>
+                </div>
+
+                <div className="pt-2 border-t border-slate-100 flex justify-between items-center text-xs">
+                  <span className="text-slate-400 font-bold">Total Amount</span>
+                  <span className="text-base font-black text-rose-600">LKR {bundleTotal.toLocaleString()}</span>
+                </div>
+
+                <button
+                  type="submit"
+                  className="w-full py-3 bg-gradient-to-r from-amber-500 to-rose-500 hover:from-amber-600 hover:to-rose-600 text-white font-extrabold text-xs rounded-xl shadow-md transition-all active:scale-95 cursor-pointer"
+                >
+                  Proceed to Payment
+                </button>
+              </form>
+            )}
+
+            {checkoutStep === "payment" && (
+              <div className="p-8 text-center flex flex-col items-center justify-center space-y-3">
+                <div className="w-10 h-10 border-4 border-violet-600 border-t-transparent rounded-full animate-spin" />
+                <div>
+                  <h4 className="font-extrabold text-slate-800 text-sm">Authorizing Gateway...</h4>
+                  <p className="text-[10px] text-slate-400 mt-1 font-bold">Verifying merchant credit with Kapruka engine.</p>
+                </div>
+              </div>
+            )}
+
+            {checkoutStep === "success" && (
+              <div className="p-6 text-center flex flex-col items-center justify-center space-y-4">
+                <div className="w-12 h-12 rounded-full bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-center text-emerald-600 shadow-sm animate-scale-up">
+                  <Check className="w-6 h-6 text-emerald-500" />
+                </div>
+                <div>
+                  <h4 className="font-extrabold text-slate-800 text-sm">Hamper Placed Successfully!</h4>
+                  <p className="text-[10px] text-slate-400 font-bold mt-1">
+                    Your gift order has been created. Real-time delivery has started.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setIsCheckoutOpen(false)}
+                  className="px-6 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition-all active:scale-95 cursor-pointer"
+                >
+                  Return to Kappy
+                </button>
+              </div>
+            )}
+
+          </div>
+        </div>
+      )}
+
+      {/* 9. Judge Wow Panel Sidebar Drawer */}
+      {isJudgeMode && (
+        <JudgePanel 
+          data={selectedTraceData} 
+          onClose={() => setIsJudgeMode(false)} 
+        />
+      )}
+    </div>
+  );
+}

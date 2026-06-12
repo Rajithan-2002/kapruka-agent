@@ -11,7 +11,7 @@ export default function JudgePanel({ data, onClose }: JudgePanelProps) {
 
     if (!data) {
         return (
-            <div className="absolute right-0 top-0 h-full w-[400px] bg-slate-950 border-l border-white/10 shadow-2xl z-50 flex flex-col transition-transform duration-300 translate-x-0">
+            <div className="fixed right-0 top-0 h-full z-50 w-full sm:w-[400px] md:relative md:right-auto md:top-auto md:z-20 md:w-[400px] md:h-full bg-slate-950 border-l border-white/10 shadow-2xl flex flex-col transition-all duration-300">
                 <div className="sticky top-0 bg-slate-900 border-b border-white/10 p-4 flex items-center justify-between z-10">
                     <div className="flex items-center gap-2 text-amber-400 font-bold text-sm">
                         <Activity className="w-4 h-4" />
@@ -34,7 +34,7 @@ export default function JudgePanel({ data, onClose }: JudgePanelProps) {
 
     if (!intelligenceTrace) {
         return (
-            <div className="absolute right-0 top-0 h-full w-[400px] bg-slate-950 border-l border-white/10 shadow-2xl z-50 flex flex-col transition-transform duration-300 translate-x-0">
+            <div className="fixed right-0 top-0 h-full z-50 w-full sm:w-[400px] md:relative md:right-auto md:top-auto md:z-20 md:w-[400px] md:h-full bg-slate-950 border-l border-white/10 shadow-2xl flex flex-col transition-all duration-300">
                 <div className="sticky top-0 bg-slate-900 border-b border-white/10 p-4 flex items-center justify-between z-10">
                     <div className="flex items-center gap-2 text-amber-400 font-bold text-sm">
                         <Activity className="w-4 h-4" />
@@ -69,7 +69,7 @@ export default function JudgePanel({ data, onClose }: JudgePanelProps) {
     );
 
     return (
-        <div className="absolute right-0 top-0 h-full w-[400px] bg-slate-950 border-l border-white/10 shadow-2xl z-50 flex flex-col transition-transform duration-300 translate-x-0 overflow-y-auto">
+        <div className="fixed right-0 top-0 h-full z-50 w-full sm:w-[400px] md:relative md:right-auto md:top-auto md:z-20 md:w-[400px] md:h-full bg-slate-950 border-l border-white/10 shadow-2xl flex flex-col transition-all duration-300 overflow-y-auto">
             <div className="sticky top-0 bg-slate-900 border-b border-white/10 p-4 flex flex-col gap-3 z-10">
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2 text-amber-400 font-bold text-sm">

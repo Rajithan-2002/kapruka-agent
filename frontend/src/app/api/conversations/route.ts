@@ -7,11 +7,8 @@ export async function GET() {
         const supabase = await createClient();
         const { data: { user } } = await supabase.auth.getUser();
 
-        if (!user) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-        }
-
-        const conversations = await getUserConversations(user.id);
+        const userId = user ? user.id : "00000000-0000-0000-0000-000000000000";
+        const conversations = await getUserConversations(userId);
         return NextResponse.json({ conversations });
     } catch (error: any) {
         console.error("Conversations GET Error:", error);
@@ -24,16 +21,13 @@ export async function POST(request: Request) {
         const supabase = await createClient();
         const { data: { user } } = await supabase.auth.getUser();
 
-        if (!user) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-        }
-
+        const userId = user ? user.id : "00000000-0000-0000-0000-000000000000";
         const { id, title } = await request.json();
         if (!id) {
             return NextResponse.json({ error: "Missing conversation ID" }, { status: 400 });
         }
 
-        const conv = await createConversation(user.id, id, title);
+        const conv = await createConversation(userId, id, title);
         return NextResponse.json({ conversation: conv });
     } catch (error: any) {
         console.error("Conversations POST Error:", error);
@@ -46,10 +40,7 @@ export async function DELETE(request: Request) {
         const supabase = await createClient();
         const { data: { user } } = await supabase.auth.getUser();
 
-        if (!user) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-        }
-
+        const userId = user ? user.id : "00000000-0000-0000-0000-000000000000";
         const { searchParams } = new URL(request.url);
         const id = searchParams.get("id");
 
@@ -57,7 +48,7 @@ export async function DELETE(request: Request) {
             return NextResponse.json({ error: "Missing conversation ID" }, { status: 400 });
         }
 
-        await deleteConversation(user.id, id);
+        await deleteConversation(userId, id);
         return NextResponse.json({ success: true });
     } catch (error: any) {
         console.error("Conversations DELETE Error:", error);
