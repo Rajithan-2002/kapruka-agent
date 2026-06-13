@@ -32,6 +32,7 @@ export interface RuleResult {
     is_reorder?: boolean;
     is_task_cancelled?: boolean;
     detected_intent?: string;
+    targetField?: string;
 }
 
 export interface RuleContext {

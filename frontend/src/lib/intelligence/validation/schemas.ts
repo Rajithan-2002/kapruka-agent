@@ -17,7 +17,7 @@ export const IntentTypeSchema = z.enum([
   "FRUSTRATION",
   "LIFE_EVENT",
   "UNKNOWN"
-]);
+]).catch("UNKNOWN");
 
 export const TriggerTypeSchema = z.enum([
   "APPRECIATION",
@@ -28,13 +28,13 @@ export const TriggerTypeSchema = z.enum([
   "CELEBRATION",
   "SYMPATHY",
   "UNKNOWN"
-]);
+]).catch("UNKNOWN");
 
 export const SituationContextSchema = z.object({
   recipient: z.string().default("UNKNOWN"),
-  recipient_type: z.enum(["FAMILY", "FRIEND", "ROMANTIC", "COLLEAGUE", "ACQUAINTANCE", "SELF", "UNKNOWN"]).default("UNKNOWN"),
+  recipient_type: z.enum(["FAMILY", "FRIEND", "ROMANTIC", "COLLEAGUE", "ACQUAINTANCE", "SELF", "UNKNOWN"]).catch("UNKNOWN"),
   occasion: z.string().default("UNKNOWN"),
-  urgency: z.enum(["LOW", "MEDIUM", "HIGH", "IMMEDIATE"]).default("LOW"),
+  urgency: z.enum(["LOW", "MEDIUM", "HIGH", "IMMEDIATE"]).catch("LOW"),
   budget: z.object({
     min: z.number().nullable().optional(),
     max: z.number().nullable().optional(),
@@ -75,23 +75,23 @@ export const MissingInfoSchema = z.object({
 });
 
 export const PreferenceCorrectionSchema = z.object({
-  type: z.enum(["CATEGORY", "PRODUCT_TYPE", "RECIPIENT_PREFERENCE", "STYLE"]),
-  target: z.string(),
+  type: z.enum(["CATEGORY", "PRODUCT_TYPE", "RECIPIENT_PREFERENCE", "STYLE"]).catch("PRODUCT_TYPE"),
+  target: z.string().default("UNKNOWN"),
   negative: z.boolean().default(true),
-  strength: z.enum(["SOFT", "HARD"]).default("HARD"),
+  strength: z.enum(["SOFT", "HARD"]).catch("HARD"),
   recipient: z.string().nullable().optional()
 });
 
 export const PriceRefinementSchema = z.object({
-  sort_order: z.enum(["ASC", "DESC", "CHEAPER", "PREMIUM"]).nullable().optional(),
+  sort_order: z.enum(["ASC", "DESC", "CHEAPER", "PREMIUM"]).nullable().optional().catch(null),
   min_price: z.number().nullable().optional(),
   max_price: z.number().nullable().optional(),
   target_price: z.number().nullable().optional(),
-  price_band: z.enum(["BUDGET", "MID", "PREMIUM", "LUXURY"]).nullable().optional()
+  price_band: z.enum(["BUDGET", "MID", "PREMIUM", "LUXURY"]).nullable().optional().catch(null)
 });
 
 export const ExtractedMemorySchema = z.object({
-  category: z.enum(["preference", "behavior", "relationship", "general"]),
+  category: z.enum(["preference", "behavior", "relationship", "general"]).catch("general"),
   relationship: z.string().nullable().optional(),
   interest: z.string().nullable().optional(),
   behavioral_trait: z.string().nullable().optional(),
@@ -100,19 +100,19 @@ export const ExtractedMemorySchema = z.object({
 });
 
 export const ExtractionResultSchema = z.object({
-  intent: IntentTypeSchema.default("UNKNOWN"),
+  intent: IntentTypeSchema,
   intentConfidence: z.number().default(0.5),
   situation: SituationContextSchema,
   psychology: PsychologyContextSchema,
   product_type: z.string().nullable().optional().transform(v => v || "UNKNOWN"),
   mapped_category: z.string().nullable().optional().transform(v => v || "UNKNOWN"),
-  interaction_mode: z.enum(["DISCOVERY", "RECOMMENDATION", "REFINEMENT", "UNKNOWN"]).default("DISCOVERY"),
-  action: z.enum(["SEARCH", "SHOW_MORE", "RECALL_PREVIOUS_RESULTS", "UNKNOWN"]).default("SEARCH"),
+  interaction_mode: z.enum(["DISCOVERY", "RECOMMENDATION", "REFINEMENT", "UNKNOWN"]).catch("DISCOVERY"),
+  action: z.enum(["SEARCH", "SHOW_MORE", "RECALL_PREVIOUS_RESULTS", "UNKNOWN"]).catch("SEARCH"),
   search_sufficiency_score: z.number().default(0.5),
-  recommendation_mode: z.enum(["FAST", "PRECISION"]).default("FAST"),
+  recommendation_mode: z.enum(["FAST", "PRECISION"]).catch("FAST"),
   preference_corrections: z.array(PreferenceCorrectionSchema).nullish().transform(v => v || []),
-  price_refinement: PriceRefinementSchema.nullable().optional(),
-  extracted_memory: ExtractedMemorySchema.nullable().optional(),
+  price_refinement: PriceRefinementSchema.nullable().optional().catch(null),
+  extracted_memory: ExtractedMemorySchema.nullable().optional().catch(null),
   missingInfo: MissingInfoSchema
 });
 

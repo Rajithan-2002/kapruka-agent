@@ -47,14 +47,29 @@ export class ClarificationRule extends BaseRule {
             // Missing Information Prioritizer
             const missing = [];
             const sit = ue.situation || {};
-            if (!sit.recipient || sit.recipient === "UNKNOWN") missing.push({ field: "recipient", p: 100 });
-            if (!sit.occasion || sit.occasion === "UNKNOWN") missing.push({ field: "occasion", p: 90 });
-            if (!sit.budget || !sit.budget.max) missing.push({ field: "budget", p: 80 });
-            if (!sit.deliveryCity || sit.deliveryCity === "UNKNOWN") missing.push({ field: "deliveryCity", p: 60 });
+            const asked = context.sessionSnapshot?.askedQuestions || [];
+
+            if (!sit.recipient || sit.recipient === "UNKNOWN") {
+                if (!asked.includes("recipient")) missing.push({ field: "recipient", p: 100 });
+            }
+            if (!sit.occasion || sit.occasion === "UNKNOWN") {
+                if (!asked.includes("occasion")) missing.push({ field: "occasion", p: 90 });
+            }
+            if (!sit.budget || !sit.budget.max) {
+                if (!asked.includes("budget")) missing.push({ field: "budget", p: 80 });
+            }
+            if (!sit.deliveryCity || sit.deliveryCity === "UNKNOWN") {
+                if (!asked.includes("deliveryCity")) missing.push({ field: "deliveryCity", p: 60 });
+            }
 
             missing.sort((a, b) => b.p - a.p);
             
-            const target = missing.length > 0 ? missing[0].field : "general";
+            if (missing.length === 0) {
+                // All missing fields were already asked! Bypass clarification to avoid infinite loop.
+                return this.noMatch("All missing fields were already asked. Bypassing to avoid loop.");
+            }
+
+            const target = missing[0].field;
 
             return {
                 matched: true,
@@ -62,6 +77,7 @@ export class ClarificationRule extends BaseRule {
                 action: "CLARIFY",
                 reason: `Missing critical info. Prioritizer selected: ${target}`,
                 confidence: 1.0,
+                targetField: target,
                 trace: [`[${this.name}] readyForRecommendation is false. Missing: ${missing.map(m=>m.field).join(",")}. Asking for ${target}.`]
             };
         }

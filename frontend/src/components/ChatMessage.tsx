@@ -52,7 +52,7 @@ export interface Message {
 
 interface ChatMessageProps {
     message: Message;
-    isDebugMode?: boolean;
+    isGodMode?: boolean;
     userId?: string;
     sessionId?: string | null;
     onAddToBundle?: (product: Product) => void;
@@ -61,13 +61,45 @@ interface ChatMessageProps {
     isMobile?: boolean;
 }
 
-export default function ChatMessage({ message, isDebugMode = false, userId, sessionId, onAddToBundle, onFollowUpClick, onProductClick, isMobile = false }: ChatMessageProps) {
+export default function ChatMessage({ message, isGodMode = false, userId, sessionId, onAddToBundle, onFollowUpClick, onProductClick, isMobile = false }: ChatMessageProps) {
     const { role, content, isLoading, loadingText, products, tracking, reassurances, transparencyMessage, followUpSuggestions } = message;
     const isAssistant = role === "assistant";
 
     // Track which products have expanded details inline
     const [expandedProducts, setExpandedProducts] = useState<Record<string, boolean>>({});
     const [feedbackSubmitted, setFeedbackSubmitted] = useState<Record<string, "RELEVANT" | "NOT_RELEVANT">>({});
+    const [copied, setCopied] = useState(false);
+
+    const copyGodModeSummary = () => {
+        if (!message.traceReport) return;
+        const { trace_id, session_summary, confidence_explanation, engine_health } = message.traceReport;
+        const summary = session_summary || {};
+        const explanation = confidence_explanation || { positive: [], negative: [] };
+        const health = engine_health || {};
+
+        const md = `### Kappy God Mode Trace Report
+- **Trace ID**: \`${trace_id || message.traceReport.trace_id}\`
+- **Intent**: ${summary.intent || "unknown"}
+- **Recipient**: ${summary.recipient || "unknown"}
+- **Occasion**: ${summary.occasion || "unknown"}
+- **Budget**: ${summary.budget ? `LKR ${summary.budget}` : "None"}
+- **Confidence**: ${Math.round((summary.confidence || 0) * 100)}%
+- **Winning Product**: ${summary.winningProductName || "None"}
+- **Duration**: ${summary.durationMs || 0}ms
+
+#### Engine Health
+${Object.entries(health).map(([engine, status]) => `- **${engine}**: ${status}`).join("\n") || "No engines tracked."}
+
+#### Confidence Checklist
+- **Positive Factors**:
+${(explanation.positive || []).map((p: string) => `  - [x] ${p}`).join("\n") || "  - None"}
+- **Negative/Missing Factors**:
+${(explanation.negative || []).map((n: string) => `  - [ ] ${n}`).join("\n") || "  - None"}
+`;
+        navigator.clipboard.writeText(md);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+    };
 
     // Pagination state
     const initialVisibleCount = message.isAllRequested ? (products?.length || 0) : (message.initialVisibleCount || 6);
@@ -392,6 +424,32 @@ export default function ChatMessage({ message, isDebugMode = false, userId, sess
                                 <span>💝</span> {r}
                             </p>
                         ))}
+                    </div>
+                )}
+
+                {/* Insights Copy Button (when God Mode active & traceReport is present) */}
+                {isGodMode && message.traceReport && (
+                    <div className="mt-2 pt-2 border-t border-slate-100 flex justify-end">
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                copyGodModeSummary();
+                            }}
+                            className="text-[10px] font-bold text-cyan-600 hover:text-cyan-800 flex items-center gap-1 bg-cyan-50 hover:bg-cyan-100 px-2 py-1 rounded transition-colors"
+                            title="Copy God Mode Markdown Summary"
+                        >
+                            {copied ? (
+                                <>
+                                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                                    <span>Copied!</span>
+                                </>
+                            ) : (
+                                <>
+                                    <AlertCircle className="w-3.5 h-3.5" />
+                                    <span>Copy Trace Insights</span>
+                                </>
+                            )}
+                        </button>
                     </div>
                 )}
             </div>

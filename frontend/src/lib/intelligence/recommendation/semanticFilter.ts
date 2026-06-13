@@ -23,6 +23,10 @@ ${productListStr}
 
 Your ONLY job is to identify products that are completely irrelevant to the user's intent. 
 For example, if the user wants "food items" or "healthy snacks", a "Toy Fire Truck" or "Fashion Sneakers" is completely irrelevant and should be removed. 
+
+CRITICAL KEYWORD HIJACKING RULE: 
+If the user is asking for a consumable or simple item (e.g., "Juice", "Coffee"), you MUST aggressively remove appliances, dispensers, or accessories (e.g., "Juice Blender", "Coffee Machine") unless the user explicitly asked for machines/appliances. Keyword matching alone is not enough; the intent must match the physical product type.
+
 DO NOT rank them or pick the best one. Just filter the garbage.
 
 Return a JSON array of strings containing ONLY the exact IDs of the irrelevant products. If all products are acceptable, return an empty array [].
