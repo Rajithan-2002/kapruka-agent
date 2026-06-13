@@ -11,7 +11,7 @@ interface Scenario {
 const SCENARIOS: Scenario[] = [
   {
     name: "Missing Recipient",
-    input: "I need to buy a gift but I don't know what to get.",
+    input: "I want to buy a gift.",
     expectClarification: true
   },
   {

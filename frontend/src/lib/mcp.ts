@@ -114,11 +114,19 @@ export async function mcpTrackOrder(orderNumber: string): Promise<Record<string,
             content?: Array<{ text?: string }>;
         };
         if (res.structuredContent?.result) {
-            return JSON.parse(res.structuredContent.result) as Record<string, unknown>;
+            try {
+                return JSON.parse(res.structuredContent.result) as Record<string, unknown>;
+            } catch (e) {
+                return { error: res.structuredContent.result };
+            }
         }
 
         if (res.content && res.content[0]?.text) {
-            return JSON.parse(res.content[0].text) as Record<string, unknown>;
+            try {
+                return JSON.parse(res.content[0].text) as Record<string, unknown>;
+            } catch (e) {
+                return { error: res.content[0].text };
+            }
         }
 
         return null;
@@ -295,8 +303,8 @@ export async function mcpCreateOrder(params: any): Promise<Record<string, any> |
         }
 
         return null;
-    } catch (error) {
+    } catch (error: any) {
         console.error("Error calling kapruka_create_order tool:", error);
-        return null;
+        throw error;
     }
 }

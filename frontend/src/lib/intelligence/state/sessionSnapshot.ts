@@ -56,6 +56,15 @@ export class SessionSnapshotEngine {
             lastUpdated: new Date().toISOString()
         };
 
+        // Always save to memory cache as a local fallback
+        if (this.snapshotCache.size >= 200 && !this.snapshotCache.has(sessionId)) {
+            const oldestSessionId = this.snapshotCache.keys().next().value;
+            if (oldestSessionId) {
+                this.snapshotCache.delete(oldestSessionId);
+            }
+        }
+        this.snapshotCache.set(sessionId, updated);
+
         if (useCloud && supabase) {
             try {
                 const { error } = await supabase
@@ -66,7 +75,7 @@ export class SessionSnapshotEngine {
                         user_id: "00000000-0000-0000-0000-000000000000", // Fallback guest user ID
                         journey_state: updated,
                         updated_at: new Date().toISOString()
-                    }, { onConflict: "session_id" });
+                    }, { onConflict: "id" });
 
                 if (error) {
                     console.error("[SessionSnapshotEngine] saveSnapshot failed:", error.message);
@@ -74,8 +83,6 @@ export class SessionSnapshotEngine {
             } catch (err) {
                 console.error("[SessionSnapshotEngine] saveSnapshot exception:", err);
             }
-        } else {
-            this.snapshotCache.set(sessionId, updated);
         }
         
         return updated;
@@ -92,17 +99,14 @@ export class SessionSnapshotEngine {
 
                 if (error) {
                     console.error("[SessionSnapshotEngine] loadSnapshot failed:", error.message);
-                    return null;
-                }
-                if (data && data.journey_state) {
+                } else if (data && data.journey_state) {
                     return data.journey_state as SessionSnapshot;
                 }
-                return null;
             } catch (err) {
                 console.error("[SessionSnapshotEngine] loadSnapshot exception:", err);
-                return null;
             }
         }
+        // Fallback to local memory cache if database load failed or is empty
         return this.snapshotCache.get(sessionId) || null;
     }
 }

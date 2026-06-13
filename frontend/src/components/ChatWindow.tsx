@@ -5,7 +5,8 @@ import {
   Sparkles, Trash2, Gift, CreditCard, ShoppingBag, X, Check, 
   BrainCircuit, Activity, Home as HomeIcon, MessageSquare, 
   Users, User as UserIcon, Mic, ArrowRight, ShieldCheck, 
-  CheckCircle2, Plus, Calendar, Eye, RefreshCw, AlertCircle, Truck
+  CheckCircle2, Plus, Calendar, Eye, RefreshCw, AlertCircle, Truck,
+  Smartphone
 } from "lucide-react";
 import ChatInput from "./ChatInput";
 import ChatMessage, { Message, Product } from "./ChatMessage";
@@ -103,6 +104,7 @@ export default function ChatWindow() {
   const [isTyping, setIsTyping] = useState(false);
   const [typingText, setTypingText] = useState("");
   const [hasCheckedSession, setHasCheckedSession] = useState(false);
+  const [sessionSnapshot, setSessionSnapshot] = useState<any | null>(null);
 
   // Hamper / Bundle details
   const [bundle, setBundle] = useState<Product[]>([]);
@@ -127,6 +129,31 @@ export default function ChatWindow() {
   const [selectedTraceData, setSelectedTraceData] = useState<any>(null);
   const [isDebugMode, setIsDebugMode] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  // Layout mode preview switcher
+  const [forcedLayout, setForcedLayout] = useState<'auto' | 'desktop' | 'mobile'>('auto');
+  const [isMobileView, setIsMobileView] = useState(false);
+  const [hasMounted, setHasMounted] = useState(false);
+
+  useEffect(() => {
+    setHasMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (!hasMounted) return;
+    const handleResize = () => {
+      if (forcedLayout === 'mobile') {
+        setIsMobileView(true);
+      } else if (forcedLayout === 'desktop') {
+        setIsMobileView(false);
+      } else {
+        setIsMobileView(window.innerWidth < 1024);
+      }
+    };
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [forcedLayout, hasMounted]);
 
   // Product Detail Modal State
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
@@ -246,11 +273,7 @@ export default function ChatWindow() {
   const [builderOccasion, setBuilderOccasion] = useState("Birthday");
   const [builderBudget, setBuilderBudget] = useState(5000);
   const [isOptimizing, setIsOptimizing] = useState(false);
-  const [builderItems, setBuilderItems] = useState<{ id: string; name: string; price: number; image: string; selected: boolean }[]>([
-    { id: "roses", name: "Premium Red Roses Bouquet", price: 2200, image: "https://images.unsplash.com/photo-1561181286-d3fee7d55364?w=200&q=80", selected: true },
-    { id: "chocs", name: "Ferrero Rocher Box (16 Pcs)", price: 1800, image: "https://images.unsplash.com/photo-1549007994-cb92ca88806f?w=200&q=80", selected: true },
-    { id: "card", name: "Custom Calligraphy Greeting Card", price: 500, image: "https://images.unsplash.com/photo-1512909006721-3d6018887383?w=200&q=80", selected: true },
-  ]);
+  const [builderItems, setBuilderItems] = useState<{ id: string; name: string; price: number; image: string; selected: boolean }[]>([]);
   const [optimizationReason, setOptimizationReason] = useState<string | null>(null);
 
   // Product detailed card viewer state
@@ -337,10 +360,13 @@ export default function ChatWindow() {
       })
       .filter(r => r.daysRemaining !== null && r.daysRemaining <= 10)
       .filter(r => {
-        const mentionsName = messages.some(m => 
-          (m.content && m.content.toLowerCase().includes(r.nickname.toLowerCase())) || 
-          (m.content && m.content.toLowerCase().includes(r.relationship_type.toLowerCase()))
-        );
+        const mentionsName = messages.some(m => {
+          const contentLower = m.content ? m.content.toLowerCase() : "";
+          const nicknameLower = r.nickname ? r.nickname.toLowerCase() : "";
+          const typeLower = r.relationship_type ? r.relationship_type.toLowerCase() : "";
+          return (nicknameLower && contentLower.includes(nicknameLower)) || 
+                 (typeLower && contentLower.includes(typeLower));
+        });
         return !mentionsName && bundle.length === 0;
       });
   };
@@ -400,23 +426,6 @@ export default function ChatWindow() {
     }
   };
 
-  const handlePreloadDemoData = async () => {
-    setIsLoadingRelationships(true);
-    try {
-      const res = await fetch("/api/relationships", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "preload" })
-      });
-      const data = await res.json();
-      if (data.relationships) setRelationships(data.relationships);
-      if (data.preferences) setPreferences(data.preferences);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsLoadingRelationships(false);
-    }
-  };
 
   const handleAddRelationship = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -510,6 +519,22 @@ export default function ChatWindow() {
     initSession();
   }, [user, hasCheckedSession]);
 
+  const loadActiveSnapshot = async (sessionId: string) => {
+    try {
+      const res = await fetch(`/api/conversations/${sessionId}/snapshot`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.snapshot) {
+          setSessionSnapshot(data.snapshot);
+        } else {
+          setSessionSnapshot(null);
+        }
+      }
+    } catch (err) {
+      console.error("Error loading active snapshot:", err);
+    }
+  };
+
   // Fetch messages on session switch
   useEffect(() => {
     if (!activeConversationId) return;
@@ -518,12 +543,22 @@ export default function ChatWindow() {
       try {
         const res = await fetch(`/api/conversations/${activeConversationId}/messages`);
         const data = await res.json();
-        if (data.messages) setMessages(data.messages);
+        if (data.messages) {
+          setMessages(data.messages);
+          const assistantMsgs = data.messages.filter((m: any) => m.role === "assistant");
+          if (assistantMsgs.length > 0) {
+            const lastAssistantMsg = assistantMsgs[assistantMsgs.length - 1];
+            setActiveMemories(lastAssistantMsg.activeMemories || []);
+          } else {
+            setActiveMemories([]);
+          }
+        }
       } catch (err) {
         console.error("Error loading messages:", err);
       }
     };
     loadMessages();
+    loadActiveSnapshot(activeConversationId);
   }, [activeConversationId]);
 
   const startNewChat = async () => {
@@ -537,6 +572,30 @@ export default function ChatWindow() {
       setActiveConversationId(newId);
       setMessages([]);
       setBundle([]);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const startNewChatAndSendMessage = async (text: string) => {
+    const newId = `session-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+    let initialTitle = text.trim();
+    if (initialTitle.length > 25) {
+      initialTitle = initialTitle.substring(0, 25) + "...";
+    }
+    if (!initialTitle) initialTitle = "Shopping Chat";
+
+    try {
+      await fetch("/api/conversations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: newId, title: initialTitle })
+      });
+      setActiveConversationId(newId);
+      setMessages([]);
+      setBundle([]);
+      setActiveTab("chat");
+      await handleSendMessage(text, newId);
     } catch (err) {
       console.error(err);
     }
@@ -561,7 +620,7 @@ export default function ChatWindow() {
   };
 
   // Core messaging flow
-  const handleSendMessage = async (text: string) => {
+  const handleSendMessage = async (text: string, overrideSessionId?: string) => {
     const userMsgId = getUniqueId("user");
     setMessages(prev => [...prev, { id: userMsgId, role: "user", content: text }]);
     
@@ -579,7 +638,7 @@ export default function ChatWindow() {
         body: JSON.stringify({
           message: text,
           history: chatHistory,
-          sessionId: activeConversationId
+          sessionId: overrideSessionId || activeConversationId
         }),
       });
 
@@ -604,6 +663,10 @@ export default function ChatWindow() {
         }]);
         if (data.activeMemories && Array.isArray(data.activeMemories)) {
           setActiveMemories(data.activeMemories);
+        }
+        const targetSessionId = overrideSessionId || activeConversationId;
+        if (targetSessionId) {
+          loadActiveSnapshot(targetSessionId);
         }
         return;
       }
@@ -679,6 +742,10 @@ export default function ChatWindow() {
           setActiveMemories(customData.activeMemories);
         }
       }
+      const targetSessionId = overrideSessionId || activeConversationId;
+      if (targetSessionId) {
+        loadActiveSnapshot(targetSessionId);
+      }
     } catch (error) {
       console.error(error);
       setIsTyping(false);
@@ -729,8 +796,7 @@ export default function ChatWindow() {
         clearInterval(typingInterval);
         setTimeout(() => {
           setIsVoiceSimulating(false);
-          setActiveTab("chat");
-          handleSendMessage(targetQuery);
+          startNewChatAndSendMessage(targetQuery);
         }, 800);
       }
     }, 45);
@@ -861,6 +927,42 @@ export default function ChatWindow() {
     setCheckoutStep("summary");
   };
 
+  const getStepStatus = (stepName: "recipient" | "occasion" | "budget" | "products" | "checkout") => {
+    if (!sessionSnapshot) {
+      if (stepName === "recipient") return "active";
+      return "pending";
+    }
+    
+    const state = sessionSnapshot.journeyState;
+    const hasRecipient = sessionSnapshot.recipient && sessionSnapshot.recipient !== "UNKNOWN";
+    const hasOccasion = sessionSnapshot.occasion && sessionSnapshot.occasion !== "UNKNOWN";
+    const hasBudget = sessionSnapshot.budget && sessionSnapshot.budget !== 0 && sessionSnapshot.budget !== "UNKNOWN";
+    const hasProducts = (sessionSnapshot.recommendedProducts && sessionSnapshot.recommendedProducts.length > 0) || (sessionSnapshot.activeBundle && sessionSnapshot.activeBundle.length > 0);
+    const isCheckout = state === "CHECKOUT_READY" || state === "ORDER_COMPLETE" || bundle.length > 0;
+
+    switch (stepName) {
+      case "recipient":
+        if (hasRecipient) return "completed";
+        if (state === "IDLE" || state === "GIFT_DISCOVERY") return "active";
+        return "pending";
+      case "occasion":
+        if (hasOccasion) return "completed";
+        if (hasRecipient) return "active";
+        return "pending";
+      case "budget":
+        if (hasBudget) return "completed";
+        if (hasOccasion) return "active";
+        return "pending";
+      case "products":
+        if (hasProducts) return "completed";
+        if (hasBudget) return "active";
+        return "pending";
+      case "checkout":
+        if (isCheckout) return "active";
+        return "pending";
+    }
+  };
+
   if (isAuthLoading) {
     return (
       <div className="flex-1 h-screen bg-slate-50 flex flex-col items-center justify-center">
@@ -870,8 +972,8 @@ export default function ChatWindow() {
     );
   }
 
-  return (
-    <div className="relative flex flex-col md:flex-row h-screen bg-slate-50 overflow-hidden text-slate-800 font-sans">
+  const mainAppJSX = (
+    <div className={`relative flex h-full bg-slate-50 overflow-hidden text-slate-800 font-sans flex-1 ${isMobileView ? "flex-col w-full" : "flex-row"}`}>
       
       {/* 1. Splash Screen Overlay */}
       {showSplash && (
@@ -916,7 +1018,8 @@ export default function ChatWindow() {
       )}
 
       {/* 2. Side Navigation Panel (Tablet & Desktop Layout) */}
-      <aside className="hidden md:flex flex-col w-64 bg-white border-r border-slate-100 h-full z-20">
+      {!isMobileView && (
+        <aside className="hidden md:flex flex-col w-64 bg-white border-r border-slate-100 h-full z-20">
         <div className="p-5 border-b border-slate-100 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-amber-400 to-rose-500 flex items-center justify-center text-white font-black text-base shadow-sm">
@@ -927,13 +1030,7 @@ export default function ChatWindow() {
               <span className="text-[10px] text-slate-400 font-bold">Powered by Kapruka</span>
             </div>
           </div>
-          <button
-            onClick={() => setIsJudgeMode(!isJudgeMode)}
-            className={`p-1.5 rounded-lg border transition-all ${isJudgeMode ? "bg-amber-500/10 border-amber-400 text-amber-500" : "bg-slate-50 border-slate-200 text-slate-400 hover:text-slate-600"}`}
-            title="Judge Panel"
-          >
-            <Activity className="w-3.5 h-3.5" />
-          </button>
+          {/* Left-side duplicate Judge Mode button removed per request */}
         </div>
 
         {/* Tab Items */}
@@ -1013,21 +1110,22 @@ export default function ChatWindow() {
           </div>
         </div>
       </aside>
+      )}
 
       {/* 3. Main Screen View Shell */}
-      <div className="flex-1 flex flex-col h-full overflow-hidden relative">
+      <div className="flex-1 flex flex-col overflow-hidden relative min-h-0">
         
         {/* Responsive Header Bar */}
         <header className="shrink-0 flex items-center justify-between px-5 py-3 bg-white border-b border-slate-100">
           <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-amber-400 to-rose-500 flex md:hidden items-center justify-center text-white font-black text-sm shadow-sm">
+            <div className={`w-7 h-7 rounded-lg bg-gradient-to-tr from-amber-400 to-rose-500 items-center justify-center text-white font-black text-sm shadow-sm ${isMobileView ? "flex" : "hidden md:hidden"}`}>
               K
             </div>
             <div>
-              <span className="font-extrabold text-slate-800 text-sm md:text-base tracking-tight capitalize block md:inline">
+              <span className={`font-extrabold text-slate-800 tracking-tight capitalize block ${isMobileView ? "text-sm" : "text-sm md:text-base md:inline"}`}>
                 {activeTab === "build-gift" ? "🎁 Build Gift" : activeTab === "memory" ? "❤️ Relationship Memory" : activeTab}
               </span>
-              <span className="text-[10px] text-slate-400 font-bold md:hidden block">Powered by Kapruka</span>
+              <span className={`text-[10px] text-slate-400 font-bold block ${isMobileView ? "" : "hidden"}`}>Powered by Kapruka</span>
             </div>
           </div>
 
@@ -1051,20 +1149,13 @@ export default function ChatWindow() {
               <Activity className="w-4 h-4" />
             </button>
 
+
             <button
               onClick={() => setIsDebugMode(!isDebugMode)}
               className={`p-2 rounded-xl border transition-all ${isDebugMode ? "bg-violet-50 text-violet-600 border-violet-200" : "bg-slate-50 border-slate-200 text-slate-400 hover:text-slate-600"}`}
               title="Dev Mode"
             >
               <BrainCircuit className="w-4 h-4" />
-            </button>
-
-            <button
-              onClick={handlePreloadDemoData}
-              className="px-2.5 py-1.5 bg-gradient-to-r from-rose-500 to-amber-500 hover:from-rose-600 hover:to-amber-600 active:scale-95 text-white font-extrabold text-[9px] uppercase rounded-xl transition-all shadow-sm flex items-center gap-1 cursor-pointer"
-              title="Load Nethmi & Dad Demo Profile"
-            >
-              🎁 Demo Mode
             </button>
 
             {/* Hamper indicator toggler */}
@@ -1083,7 +1174,7 @@ export default function ChatWindow() {
         </header>
 
         {/* 4. Tab Body Content */}
-        <div className="flex-1 overflow-y-auto scrollbar-thin">
+        <div className={`flex-1 flex flex-col ${activeTab === "chat" ? "overflow-hidden" : "overflow-y-auto scrollbar-thin"}`}>
           
           {/* HOME TAB VIEW */}
           {activeTab === "home" && (
@@ -1106,8 +1197,7 @@ export default function ChatWindow() {
                       onChange={(e) => setVoiceInputText(e.target.value)}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" && voiceInputText.trim()) {
-                          setActiveTab("chat");
-                          handleSendMessage(voiceInputText);
+                          startNewChatAndSendMessage(voiceInputText);
                           setVoiceInputText("");
                         }
                       }}
@@ -1122,8 +1212,7 @@ export default function ChatWindow() {
                   <button
                     onClick={() => {
                       if (voiceInputText.trim()) {
-                        setActiveTab("chat");
-                        handleSendMessage(voiceInputText);
+                        startNewChatAndSendMessage(voiceInputText);
                         setVoiceInputText("");
                       }
                     }}
@@ -1177,8 +1266,7 @@ export default function ChatWindow() {
                         <span
                           key={r.id}
                           onClick={() => {
-                            setActiveTab("chat");
-                            handleSendMessage(`Find gift options for ${r.nickname}'s upcoming event`);
+                            startNewChatAndSendMessage(`Find gift options for ${r.nickname}'s upcoming event`);
                           }}
                           className="px-3 py-1.5 bg-violet-50 hover:bg-violet-100 text-violet-700 border border-violet-100 rounded-full text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all active:scale-95 shadow-sm"
                         >
@@ -1223,8 +1311,7 @@ export default function ChatWindow() {
                 <div className="grid grid-cols-2 gap-2.5">
                   <button
                     onClick={() => {
-                      setActiveTab("chat");
-                      handleSendMessage("🎂 Birthday gift options under LKR 5000");
+                      startNewChatAndSendMessage("🎂 Birthday gift options under LKR 5000");
                     }}
                     className="flex items-center gap-3 p-3 bg-white border border-slate-100 rounded-xl hover:border-violet-300 hover:bg-violet-50/20 text-slate-700 font-bold transition-all text-xs text-left shadow-sm active:scale-95"
                   >
@@ -1232,8 +1319,7 @@ export default function ChatWindow() {
                   </button>
                   <button
                     onClick={() => {
-                      setActiveTab("chat");
-                      handleSendMessage("❤️ Anniversary package for my spouse");
+                      startNewChatAndSendMessage("❤️ Anniversary package for my spouse");
                     }}
                     className="flex items-center gap-3 p-3 bg-white border border-slate-100 rounded-xl hover:border-violet-300 hover:bg-violet-50/20 text-slate-700 font-bold transition-all text-xs text-left shadow-sm active:scale-95"
                   >
@@ -1241,8 +1327,7 @@ export default function ChatWindow() {
                   </button>
                   <button
                     onClick={() => {
-                      setActiveTab("chat");
-                      handleSendMessage("🎓 Graduation congrats hamper");
+                      startNewChatAndSendMessage("🎓 Graduation congrats hamper");
                     }}
                     className="flex items-center gap-3 p-3 bg-white border border-slate-100 rounded-xl hover:border-violet-300 hover:bg-violet-50/20 text-slate-700 font-bold transition-all text-xs text-left shadow-sm active:scale-95"
                   >
@@ -1250,8 +1335,7 @@ export default function ChatWindow() {
                   </button>
                   <button
                     onClick={() => {
-                      setActiveTab("chat");
-                      handleSendMessage("👶 Baby Shower gift items list");
+                      startNewChatAndSendMessage("👶 Baby Shower gift items list");
                     }}
                     className="flex items-center gap-3 p-3 bg-white border border-slate-100 rounded-xl hover:border-violet-300 hover:bg-violet-50/20 text-slate-700 font-bold transition-all text-xs text-left shadow-sm active:scale-95"
                   >
@@ -1267,10 +1351,7 @@ export default function ChatWindow() {
                   <button onClick={() => setActiveTab("build-gift")} className="text-[10px] text-violet-600 font-bold hover:underline">Customize ✨</button>
                 </div>
                 <div className="space-y-3">
-                  {(landingBundles.length > 0 ? landingBundles : [
-                    { id: "mock-hamp-1", name: "Romantic Surprise Hamper", price: 4850, image: "https://images.unsplash.com/photo-1549007994-cb92ca88806f?w=400&q=80", tag: "Roses + Chocolate + Card", delivery: "🚚 Same Day Delivery", url: "https://www.kapruka.com/buyonline/romantic-surprise-hamper" },
-                    { id: "mock-hamp-2", name: "Celebration Birthday Basket", price: 7200, image: "https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?w=400&q=80", tag: "Cake + Balloons + Toys", delivery: "🚚 Arrives Today", url: "https://www.kapruka.com/buyonline/celebration-birthday-basket" }
-                  ]).map((hamp, idx) => (
+                  {landingBundles.map((hamp: any, idx: number) => (
                     <div 
                       key={hamp.id || idx} 
                       onClick={() => addToBundle({
@@ -1289,8 +1370,7 @@ export default function ChatWindow() {
                           <h4 className="font-bold text-slate-800 text-xs md:text-sm truncate">{hamp.name}</h4>
                           <p className="text-[10px] text-slate-400 font-semibold mt-0.5">{hamp.tag}</p>
                         </div>
-                        <div className="flex items-center justify-between mt-1.5">
-                          <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded">{hamp.delivery}</span>
+                        <div className="flex items-center justify-end mt-1.5">
                           <span className="text-xs font-black text-rose-600">LKR {hamp.price.toLocaleString()}</span>
                         </div>
                       </div>
@@ -1303,10 +1383,7 @@ export default function ChatWindow() {
               <div className="space-y-3">
                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Today's Fast Delivery</span>
                 <div className="grid grid-cols-2 gap-3">
-                  {(landingFastDelivery.length > 0 ? landingFastDelivery : [
-                    { id: "mock-fast-1", name: "Delicious Chocolate Gateau Cake", price: 3200, image: "https://images.unsplash.com/photo-1578985545062-69928b1d9587?w=300&q=80", delay: "2 Hours", url: "https://www.kapruka.com/buyonline/delicious-chocolate-gateau-cake" },
-                    { id: "mock-fast-2", name: "Fresh Red Roses Bunch", price: 2200, image: "https://images.unsplash.com/photo-1561181286-d3fee7d55364?w=300&q=80", delay: "3 Hours", url: "https://www.kapruka.com/buyonline/fresh-red-roses-bunch" }
-                  ]).map((prod, idx) => (
+                  {landingFastDelivery.map((prod: any, idx: number) => (
                     <div 
                       key={prod.id || idx} 
                       onClick={() => addToBundle({
@@ -1321,9 +1398,6 @@ export default function ChatWindow() {
                     >
                       <div className="relative h-28 w-full rounded-xl overflow-hidden bg-slate-50">
                         <img src={prod.image} alt={prod.name} className="w-full h-full object-cover" />
-                        <span className="absolute bottom-1.5 left-1.5 bg-emerald-500 text-white font-extrabold text-[9px] px-1.5 py-0.5 rounded shadow-sm">
-                          ⚡ {prod.delay}
-                        </span>
                       </div>
                       <h5 className="font-bold text-slate-800 text-xs mt-2 truncate">{prod.name}</h5>
                       <p className="text-xs font-extrabold text-slate-500 mt-0.5">LKR {prod.price.toLocaleString()}</p>
@@ -1501,8 +1575,50 @@ export default function ChatWindow() {
 
           {/* CHAT TAB VIEW */}
           {activeTab === "chat" && (
-            <div className="flex h-full bg-slate-50 relative overflow-hidden">
-              <div className="flex-1 flex flex-col h-full relative">
+            <div className="flex flex-1 bg-slate-50 relative overflow-hidden min-h-0">
+              <div className="flex-1 flex flex-col relative min-h-0">
+                {/* Situation Timeline */}
+                <div className="shrink-0 bg-white border-b border-slate-100 px-4 py-2.5 flex items-center justify-between overflow-x-auto scrollbar-none gap-2">
+                  {[
+                    { key: "recipient", label: "Recipient", icon: "👩" },
+                    { key: "occasion", label: "Occasion", icon: "🎂" },
+                    { key: "budget", label: "Budget", icon: "💰" },
+                    { key: "products", label: "Products", icon: "🛍️" },
+                    { key: "checkout", label: "Checkout", icon: "💳" }
+                  ].map((step, idx, arr) => {
+                    const status = getStepStatus(step.key as any);
+                    return (
+                      <React.Fragment key={step.key}>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold border transition-all ${
+                            status === "completed" 
+                              ? "bg-emerald-500 border-emerald-500 text-white shadow-sm"
+                              : status === "active"
+                              ? "bg-violet-650 border-violet-650 text-white shadow-sm animate-pulse"
+                              : "bg-slate-50 border-slate-200 text-slate-400"
+                          }`}>
+                            {status === "completed" ? "✓" : step.icon}
+                          </div>
+                          <span className={`text-[11px] font-black tracking-tight ${
+                            status === "completed"
+                              ? "text-emerald-600 font-bold"
+                              : status === "active"
+                              ? "text-violet-750 font-black"
+                              : "text-slate-400"
+                          }`}>
+                            {step.label}
+                          </span>
+                        </div>
+                        {idx < arr.length - 1 && (
+                          <div className={`h-0.5 w-4 md:w-8 shrink-0 ${
+                            status === "completed" ? "bg-emerald-300" : "bg-slate-100"
+                          }`} />
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
+                </div>
+
                 <div ref={scrollContainerRef} className="flex-1 overflow-y-auto px-5 py-5 space-y-4 scrollbar-thin">
                   {messages.length === 0 ? (
                     <div className="flex flex-col items-center justify-center h-full text-center p-6 text-slate-400">
@@ -1535,6 +1651,7 @@ export default function ChatWindow() {
                           onAddToBundle={addToBundle}
                           onFollowUpClick={(text) => handleSendMessage(text)}
                           onProductClick={handleOpenProductModal}
+                          isMobile={isMobileView}
                         />
                       </div>
                     ))
@@ -1549,7 +1666,117 @@ export default function ChatWindow() {
                         isLoading: true,
                         loadingText: typingText
                       }}
+                      isMobile={isMobileView}
                     />
+                  )}
+                </div>
+
+                {/* Conversation Context Dock */}
+                {sessionSnapshot && (sessionSnapshot.recipient || sessionSnapshot.occasion || (sessionSnapshot.budget && sessionSnapshot.budget !== 0)) && (
+                  <div className="shrink-0 bg-violet-50 border-t border-violet-100 px-4 py-2.5 flex items-center justify-between">
+                    <div className="flex flex-wrap gap-x-3 gap-y-1 items-center">
+                      <span className="text-[10px] font-black text-violet-750 uppercase tracking-widest flex items-center gap-1">
+                        🎁 ACTIVE CONTEXT:
+                      </span>
+                      {sessionSnapshot.recipient && sessionSnapshot.recipient !== "UNKNOWN" && (
+                        <span className="text-xs font-bold text-violet-800">
+                          For {sessionSnapshot.recipient}
+                        </span>
+                      )}
+                      {sessionSnapshot.occasion && sessionSnapshot.occasion !== "UNKNOWN" && (
+                        <span className="text-xs font-bold text-violet-800">
+                          • {sessionSnapshot.occasion}
+                        </span>
+                      )}
+                      {sessionSnapshot.budget && sessionSnapshot.budget !== 0 && sessionSnapshot.budget !== "UNKNOWN" && (
+                        <span className="text-xs font-bold text-rose-600">
+                          • LKR {sessionSnapshot.budget.toLocaleString()}
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      onClick={async () => {
+                        if (confirm("Would you like to clear the current gifting session context?")) {
+                          try {
+                            await fetch(`/api/chat`, {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({
+                                message: "reset context",
+                                history: [],
+                                sessionId: activeConversationId
+                              })
+                            });
+                            if (activeConversationId) {
+                              loadActiveSnapshot(activeConversationId);
+                            }
+                            setMessages(prev => [...prev, {
+                              id: `reset-${Date.now()}`,
+                              role: "assistant",
+                              content: "Gifting context cleared! What can I help you find now? 😊"
+                            }]);
+                          } catch (e) {
+                            console.error(e);
+                          }
+                        }
+                      }}
+                      className="text-[10px] bg-white border border-violet-200 text-violet-600 hover:bg-violet-100 px-2 py-0.5 rounded font-black active:scale-95 transition-all cursor-pointer"
+                    >
+                      Reset
+                    </button>
+                  </div>
+                )}
+
+                {/* Dynamic Sticky Action Bar */}
+                <div className="shrink-0 bg-white border-t border-slate-100 px-4 py-2 overflow-x-auto scrollbar-none flex gap-2">
+                  {!sessionSnapshot || (!sessionSnapshot.recipient && !sessionSnapshot.occasion && !sessionSnapshot.budget) ? (
+                    [
+                      { label: "🎂 Birthday Gift", query: "Help me find a Birthday gift" },
+                      { label: "❤️ Anniversary", query: "Anniversary gift packages" },
+                      { label: "📦 Track Order", query: "Track order status" },
+                      { label: "🛍️ Browse Cakes", query: "Browse delicious cakes" }
+                    ].map((btn, idx) => (
+                      <button
+                        key={idx}
+                        onClick={() => handleSendMessage(btn.query)}
+                        className="shrink-0 px-3 py-1.5 bg-slate-50 hover:bg-slate-100 hover:text-slate-900 border border-slate-200 text-slate-600 rounded-full text-xs font-bold transition-all active:scale-95 cursor-pointer"
+                      >
+                        {btn.label}
+                      </button>
+                    ))
+                  ) : (
+                    [
+                      sessionSnapshot.recipient && sessionSnapshot.recipient !== "UNKNOWN" && {
+                        label: `👩 Recipient: ${sessionSnapshot.recipient}`,
+                        query: `gifting for ${sessionSnapshot.recipient}`
+                      },
+                      sessionSnapshot.occasion && sessionSnapshot.occasion !== "UNKNOWN" && {
+                        label: `🎂 Occasion: ${sessionSnapshot.occasion}`,
+                        query: `gifting occasion ${sessionSnapshot.occasion}`
+                      },
+                      sessionSnapshot.budget && sessionSnapshot.budget !== 0 && sessionSnapshot.budget !== "UNKNOWN" && {
+                        label: `💰 Budget: LKR ${sessionSnapshot.budget.toLocaleString()}`,
+                        query: `budget ${sessionSnapshot.budget}`
+                      },
+                      {
+                        label: "🚚 Colombo Delivery Routes",
+                        query: "Check delivery timelines for Colombo"
+                      },
+                      {
+                        label: "✨ Optimize hampering",
+                        query: "optimize hamper selection"
+                      }
+                    ]
+                      .filter(Boolean)
+                      .map((btn: any, idx) => (
+                        <button
+                          key={idx}
+                          onClick={() => handleSendMessage(btn.query)}
+                          className="shrink-0 px-3 py-1.5 bg-violet-50 hover:bg-violet-100 hover:text-violet-900 border border-violet-200 text-violet-750 rounded-full text-xs font-black transition-all active:scale-95 cursor-pointer"
+                        >
+                          {btn.label}
+                        </button>
+                      ))
                   )}
                 </div>
 
@@ -1607,12 +1834,6 @@ export default function ChatWindow() {
                     </p>
                   </div>
                   <div className="flex flex-col gap-2 pt-2">
-                    <button
-                      onClick={handlePreloadDemoData}
-                      className="w-full py-2.5 bg-violet-50 hover:bg-violet-100 text-violet-700 font-extrabold text-xs rounded-xl border border-violet-200 transition-all cursor-pointer"
-                    >
-                      🎁 Load Demo Data (Nethmi & Dad)
-                    </button>
                     <button
                       onClick={() => setShowAddPersonModal(true)}
                       className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs rounded-xl transition-all cursor-pointer"
@@ -1824,52 +2045,67 @@ export default function ChatWindow() {
 
         </div>
 
+        {/* Floating Bundle Pill (Mobile only when bundle has items and drawer is closed) */}
+        {isMobileView && bundle.length > 0 && !isBundleOpen && (
+          <button
+            onClick={() => setIsBundleOpen(true)}
+            className="fixed bottom-20 right-4 z-40 flex items-center gap-2 px-4 py-3 bg-gradient-to-r from-amber-500 to-rose-500 hover:from-amber-600 hover:to-rose-600 text-white rounded-full shadow-lg shadow-rose-200/50 hover:shadow-xl active:scale-95 transition-all duration-300 font-extrabold animate-bounce-slow cursor-pointer"
+          >
+            <ShoppingBag className="w-4 h-4" />
+            <span className="text-xs">
+              🛍️ {bundle.length} {bundle.length === 1 ? "Item" : "Items"} • LKR {bundleTotal.toLocaleString()}
+            </span>
+          </button>
+        )}
+
         {/* 5. Bottom Navigation Bar (Mobile / Tablet Layout) */}
-        <footer className="shrink-0 md:hidden bg-white border-t border-slate-100 flex justify-between items-center px-4 py-2.5 z-20">
-          <button
-            onClick={() => setActiveTab("home")}
-            className={`flex flex-col items-center gap-1 flex-1 py-1 ${activeTab === "home" ? "text-violet-600 font-extrabold" : "text-slate-400"}`}
-          >
-            <HomeIcon className="w-5 h-5" />
-            <span className="text-[10px] font-bold">Home</span>
-          </button>
-          <button
-            onClick={() => setActiveTab("build-gift")}
-            className={`flex flex-col items-center gap-1 flex-1 py-1 ${activeTab === "build-gift" ? "text-violet-600 font-extrabold" : "text-slate-400"}`}
-          >
-            <Gift className="w-5 h-5" />
-            <span className="text-[10px] font-bold">Build Gift</span>
-          </button>
-          <button
-            onClick={() => setActiveTab("chat")}
-            className={`flex flex-col items-center gap-1 flex-1 py-1 ${activeTab === "chat" ? "text-violet-600 font-extrabold" : "text-slate-400"}`}
-          >
-            <MessageSquare className="w-5 h-5" />
-            <span className="text-[10px] font-bold">Chat</span>
-          </button>
-          <button
-            onClick={() => setActiveTab("memory")}
-            className={`flex flex-col items-center gap-1 flex-1 py-1 ${activeTab === "memory" ? "text-violet-600 font-extrabold" : "text-slate-400"}`}
-          >
-            <Users className="w-5 h-5" />
-            <span className="text-[10px] font-bold">Memory</span>
-          </button>
-          <button
-            onClick={() => setActiveTab("profile")}
-            className={`flex flex-col items-center gap-1 flex-1 py-1 ${activeTab === "profile" ? "text-violet-600 font-extrabold" : "text-slate-400"}`}
-          >
-            <UserIcon className="w-5 h-5" />
-            <span className="text-[10px] font-bold">Profile</span>
-          </button>
-        </footer>
+        {isMobileView && (
+          <footer className="shrink-0 bg-white border-t border-slate-100 flex justify-between items-center px-4 py-2.5 z-20">
+            <button
+              onClick={() => setActiveTab("home")}
+              className={`flex flex-col items-center gap-1 flex-1 py-1 ${activeTab === "home" ? "text-violet-600 font-extrabold" : "text-slate-400"}`}
+            >
+              <HomeIcon className="w-5 h-5" />
+              <span className="text-[10px] font-bold">Home</span>
+            </button>
+            <button
+              onClick={() => setActiveTab("build-gift")}
+              className={`flex flex-col items-center gap-1 flex-1 py-1 ${activeTab === "build-gift" ? "text-violet-600 font-extrabold" : "text-slate-400"}`}
+            >
+              <Gift className="w-5 h-5" />
+              <span className="text-[10px] font-bold">Build Gift</span>
+            </button>
+            <button
+              onClick={() => setActiveTab("chat")}
+              className={`flex flex-col items-center gap-1 flex-1 py-1 ${activeTab === "chat" ? "text-violet-600 font-extrabold" : "text-slate-400"}`}
+            >
+              <MessageSquare className="w-5 h-5" />
+              <span className="text-[10px] font-bold">Chat</span>
+            </button>
+            <button
+              onClick={() => setActiveTab("memory")}
+              className={`flex flex-col items-center gap-1 flex-1 py-1 ${activeTab === "memory" ? "text-violet-600 font-extrabold" : "text-slate-400"}`}
+            >
+              <Users className="w-5 h-5" />
+              <span className="text-[10px] font-bold">Memory</span>
+            </button>
+            <button
+              onClick={() => setActiveTab("profile")}
+              className={`flex flex-col items-center gap-1 flex-1 py-1 ${activeTab === "profile" ? "text-violet-600 font-extrabold" : "text-slate-400"}`}
+            >
+              <UserIcon className="w-5 h-5" />
+              <span className="text-[10px] font-bold">Profile</span>
+            </button>
+          </footer>
+        )}
       </div>
 
       {/* 6. Bundle / Hamper Sidebar Drawer (Desktop View / Collapsible) */}
       <aside
         className={`h-full bg-white border-l border-slate-100 flex flex-col transition-all duration-500 relative z-20 ${
           isBundleOpen 
-            ? "w-full md:w-[350px] fixed inset-y-0 right-0 md:relative md:flex" 
-            : "w-0 md:w-0 overflow-hidden border-none fixed inset-y-0 right-[-100%] md:relative"
+            ? `${isMobileView ? "w-full fixed inset-y-0 right-0 z-30 flex" : "w-[350px] relative flex"}` 
+            : `${isMobileView ? "w-0 overflow-hidden border-none fixed inset-y-0 right-[-100%]" : "w-0 overflow-hidden border-none relative"}`
         }`}
       >
         <div className="flex items-center justify-between px-5 py-4 bg-slate-50 border-b border-slate-100">
@@ -1879,7 +2115,7 @@ export default function ChatWindow() {
           </div>
           <button
             onClick={() => setIsBundleOpen(false)}
-            className="md:hidden p-1.5 text-slate-400 hover:text-slate-600 rounded-lg"
+            className={`p-1.5 text-slate-400 hover:text-slate-600 rounded-lg ${isMobileView ? "" : "hidden md:hidden"}`}
           >
             <X className="w-5 h-5" />
           </button>
@@ -2270,6 +2506,12 @@ export default function ChatWindow() {
           onClose={() => setIsJudgeMode(false)} 
         />
       )}
+    </div>
+  );
+
+  return (
+    <div className="w-screen h-screen overflow-hidden flex flex-col bg-slate-50">
+      {mainAppJSX}
     </div>
   );
 }

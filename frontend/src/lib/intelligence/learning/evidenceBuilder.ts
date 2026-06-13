@@ -46,6 +46,15 @@ export class EvidenceBuilder {
         }
 
         evidence.confidence = this.calculateConfidence(evidence);
+
+        // Memory Leak Protection: Cap fallback evidence store cache to 1000 users using FIFO eviction
+        if (this.evidenceStore.size >= 1000 && !this.evidenceStore.has(signal.userId)) {
+            const oldestUserId = this.evidenceStore.keys().next().value;
+            if (oldestUserId) {
+                this.evidenceStore.delete(oldestUserId);
+            }
+        }
+
         this.evidenceStore.set(signal.userId, userEvidenceList);
 
         // TODO: UPSERT into `user_evidence` Supabase table

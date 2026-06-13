@@ -51,7 +51,7 @@ export class MemoryRelevanceEngine {
         scored.sort((a, b) => b.score - a.score);
 
         const MAX_ACTIVE_MEMORIES = 5;
-        const MIN_SCORE_THRESHOLD = 0.3;
+        const MIN_SCORE_THRESHOLD = 0.45;
 
         const relevant: MemoryItem[] = [];
         const ignored: MemoryItem[] = [];

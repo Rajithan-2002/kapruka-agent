@@ -124,6 +124,14 @@ export interface ExtractionResult {
     price_band?: "BUDGET" | "MID" | "PREMIUM" | "LUXURY";
   };
   missingInfo: MissingInfo;
+  extracted_memory?: {
+    category: "preference" | "behavior" | "relationship" | "general";
+    relationship?: string;
+    interest?: string;
+    behavioral_trait?: string;
+    general_note?: string;
+    confidence: number;
+  };
 }
 
 export interface IntelligenceOutput {
@@ -157,6 +165,14 @@ export interface IntelligenceOutput {
     max_price?: number;
     target_price?: number;
     price_band?: "BUDGET" | "MID" | "PREMIUM" | "LUXURY";
+  };
+  extracted_memory?: {
+    category: "preference" | "behavior" | "relationship" | "general";
+    relationship?: string;
+    interest?: string;
+    behavioral_trait?: string;
+    general_note?: string;
+    confidence: number;
   };
 
   // Observability

@@ -26,7 +26,10 @@ export default function MemoryVault({ relationships, preferences, activeMemories
 
     // Find nickname and preferences for the active recipient
     const activeRel = activeRecipient
-        ? relationships.find(r => r.relationship_type?.toLowerCase() === activeRecipient.toLowerCase())
+        ? relationships.find(r => 
+            r.relationship_type?.toLowerCase() === activeRecipient.toLowerCase() ||
+            r.nickname?.toLowerCase() === activeRecipient.toLowerCase()
+          )
         : null;
 
     const recipientPrefs = activeRel

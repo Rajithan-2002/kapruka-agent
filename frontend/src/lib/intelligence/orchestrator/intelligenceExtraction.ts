@@ -116,6 +116,19 @@ const EXTRACTION_SCHEMA = {
           price_band: { type: "string", enum: ["BUDGET", "MID", "PREMIUM", "LUXURY"] }
         }
       },
+      extracted_memory: {
+        type: "object",
+        description: "Populate this if the user shares ANY personal details, likes, dislikes, family members, habits, or relationship details. E.g. 'for my brother', 'dad loves golf', 'I hate chocolate'.",
+        properties: {
+          category: { type: "string", enum: ["preference", "behavior", "relationship", "general"] },
+          relationship: { type: "string", description: "The person this memory is about, e.g. 'brother', 'mother', 'self', 'friend'." },
+          interest: { type: "string", description: "What they like or dislike. Use 'Dislikes: [item]' for negative preferences." },
+          behavioral_trait: { type: "string", description: "A personality trait or shopping habit." },
+          general_note: { type: "string" },
+          confidence: { type: "number", description: "Confidence score 0.0 to 1.0" }
+        },
+        required: ["category"]
+      },
       missingInfo: {
         type: "object",
         properties: {

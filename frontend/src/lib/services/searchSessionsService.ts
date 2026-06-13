@@ -21,7 +21,19 @@ export interface SearchSession {
     created_at?: string;
 }
 
+// Bounded in-memory fallback cache for guest/offline scenarios
+const searchSessionCache = new Map<string, SearchSession>();
+
 export async function saveSearchSession(session: SearchSession) {
+    // Always save to local memory cache first
+    searchSessionCache.set(session.chat_session_id, session);
+    if (searchSessionCache.size > 200) {
+        const oldestId = searchSessionCache.keys().next().value;
+        if (oldestId) {
+            searchSessionCache.delete(oldestId);
+        }
+    }
+
     try {
         const supabase = await createClient();
         const { error } = await supabase.from('search_sessions').upsert({
@@ -60,10 +72,10 @@ export async function getSearchSession(chatSessionId: string, userId: string): P
             .eq('user_id', userId)
             .single();
             
-        if (error || !data) return null;
-        return data as SearchSession;
+        if (!error && data) return data as SearchSession;
     } catch (e) {
-        console.error("Failed to get search session", e);
-        return null;
+        console.error("Failed to get search session from database", e);
     }
+    // Fallback to local memory cache
+    return searchSessionCache.get(chatSessionId) || null;
 }

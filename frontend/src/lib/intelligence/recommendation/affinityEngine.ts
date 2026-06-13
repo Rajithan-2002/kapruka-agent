@@ -30,6 +30,14 @@ export class AffinityEngine {
             case "EXPLICIT_DISLIKE": delta = -5.0; break;
         }
 
+        // Memory Leak Protection: Cap fallback cache size to 1000 users using FIFO eviction
+        if (this.cache.size >= 1000 && !this.cache.has(userId)) {
+            const oldestUserId = this.cache.keys().next().value;
+            if (oldestUserId) {
+                this.cache.delete(oldestUserId);
+            }
+        }
+
         const userAffinities = this.cache.get(userId) || [];
         const existing = userAffinities.find(a => a.targetType === targetType && a.targetId === targetId);
         
