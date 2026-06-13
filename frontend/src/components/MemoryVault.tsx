@@ -49,7 +49,7 @@ export default function MemoryVault({ relationships, preferences, activeMemories
     }, [preferences.length]);
 
     return (
-        <div className="flex flex-col h-full bg-slate-900 text-slate-100 border-l border-slate-800 w-full md:w-[320px] shrink-0 overflow-y-auto font-sans relative shadow-xl">
+        <div className="flex flex-col h-full bg-slate-900 text-slate-100 w-full max-w-full shrink-0 overflow-y-auto font-sans relative shadow-xl">
             {/* Header */}
             <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800 bg-slate-950/80 backdrop-blur-md sticky top-0 z-10">
                 <div className="flex items-center gap-2">

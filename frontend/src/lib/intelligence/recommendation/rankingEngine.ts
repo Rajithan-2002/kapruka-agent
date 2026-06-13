@@ -40,10 +40,16 @@ export class RankingEngine {
             const pid = p.id || p.product_id;
             
             // 1. Situation Match (30%)
-            const situationScore = this.calcSituationScore(p, context.situation, context.searchQuery);
+            let situationScore = this.calcSituationScore(p, context.situation, context.searchQuery);
             
             // 2. Recipient Match (20%)
-            const recipientScore = this.calcRecipientScore(p, context.recipient);
+            let recipientScore = this.calcRecipientScore(p, context.recipient);
+
+            // Apply child context boosts
+            if (p.childBoost) {
+                situationScore = Math.min(1.0, situationScore + 0.3);
+                recipientScore = Math.min(1.0, recipientScore + 0.3);
+            }
             
             // 3. Delivery Feasibility (20%) - Hard Requirement
             const deliveryScore = this.calcDeliveryScore(p);
@@ -79,6 +85,11 @@ export class RankingEngine {
             // Apply boosts
             let finalScore = (rawScore + (memoryBoostScore * 0.05)) * intelMultiplier;
 
+            // Apply child context penalty
+            if (p.childPenalty) {
+                finalScore *= 0.05;
+            }
+
             // Hard constraints check: out of stock or completely out of budget range receives severe penalty
             if (p.in_stock === false || p.inStock === false || deliveryScore === 0) {
                 finalScore = 0.0;
@@ -113,7 +124,8 @@ export class RankingEngine {
 
     private static calcSituationScore(product: any, situation: string, searchQuery: string): number {
         let score = 0.4; // Base score
-        const pTags = (product.name + " " + (product.summary || "") + " " + (product.tags || "") + " " + (product.categories || "") + " " + (product.category || "")).toLowerCase();
+        const catStr = typeof product.category === 'object' && product.category !== null ? (product.category.name || product.category.id || "") : (product.category || "");
+        const pTags = (product.name + " " + (product.summary || "") + " " + (product.tags || "") + " " + (product.categories || "") + " " + catStr).toLowerCase();
         
         if (situation) {
             const occ = situation.toLowerCase().trim();
@@ -140,7 +152,8 @@ export class RankingEngine {
         let score = 0.5; // Neutral baseline
         if (recipient) {
             const recip = recipient.toLowerCase().trim();
-            const pTags = (product.name + " " + (product.summary || "") + " " + (product.tags || "") + " " + (product.category || "")).toLowerCase();
+            const catStr = typeof product.category === 'object' && product.category !== null ? (product.category.name || product.category.id || "") : (product.category || "");
+            const pTags = (product.name + " " + (product.summary || "") + " " + (product.tags || "") + " " + catStr).toLowerCase();
             
             const girlfriendWife = ["rose", "flower", "chocolate", "teddy", "perfume", "jewelry", "pendant", "ring", "red", "heart", "hamper"];
             const fatherDad = ["wallet", "belt", "watch", "shaving", "perfume", "coffee", "mug", "electronics", "card", "shirt", "tool", "hamper"];
@@ -201,7 +214,8 @@ export class RankingEngine {
     private static calcAffinityScore(product: any, affinities: AffinityRecord[]): number {
         if (!affinities || !affinities.length) return 0.5; // Cold start
         
-        const category = (product.category || "").toLowerCase();
+        const rawCategory = product.category;
+        const category = (typeof rawCategory === 'object' && rawCategory !== null ? (rawCategory.name || rawCategory.id || "") : (rawCategory || "")).toLowerCase();
         const catAffinity = affinities.find(a => a.targetType === "category" && a.targetId.toLowerCase() === category);
         
         if (catAffinity) {

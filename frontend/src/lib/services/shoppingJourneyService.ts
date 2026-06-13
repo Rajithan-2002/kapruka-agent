@@ -21,16 +21,20 @@ export interface ShoppingJourney {
     updated_at?: string;
 }
 
+export const GUEST_USER_ID = "22222222-2222-2222-2222-222222222222";
+
 export async function getOrCreateJourney(
     userId: string,
     sessionId: string,
     occasion?: string,
     recipient?: string
 ): Promise<ShoppingJourney> {
+    const activeUserId = !userId || userId === "00000000-0000-0000-0000-000000000000" ? GUEST_USER_ID : userId;
+
     if (!useCloud || !supabase) {
         return {
             id: `journey-${sessionId}`,
-            user_id: userId,
+            user_id: activeUserId,
             session_id: sessionId,
             occasion,
             recipient,
@@ -42,7 +46,7 @@ export async function getOrCreateJourney(
     const { data, error } = await supabase
         .from("shopping_journey")
         .select("*")
-        .eq("user_id", userId)
+        .eq("user_id", activeUserId)
         .eq("session_id", sessionId)
         .maybeSingle();
 
@@ -75,7 +79,7 @@ export async function getOrCreateJourney(
     const id = `jou-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
     const newJourney: ShoppingJourney = {
         id,
-        user_id: userId,
+        user_id: activeUserId,
         session_id: sessionId,
         occasion: occasion || null as any,
         recipient: recipient || null as any,
@@ -98,6 +102,8 @@ export async function updateJourneyStages(
     sessionId: string,
     stages: JourneyStage[]
 ): Promise<void> {
+    const activeUserId = !userId || userId === "00000000-0000-0000-0000-000000000000" ? GUEST_USER_ID : userId;
+
     if (!useCloud || !supabase) return;
 
     await supabase
@@ -106,7 +112,7 @@ export async function updateJourneyStages(
             stages,
             updated_at: new Date().toISOString()
         })
-        .eq("user_id", userId)
+        .eq("user_id", activeUserId)
         .eq("session_id", sessionId);
 }
 
@@ -125,6 +131,12 @@ export async function getJourneySnapshot(sessionId: string): Promise<string | nu
 
 export async function saveJourneySnapshot(sessionId: string, state: string): Promise<void> {
     if (!useCloud || !supabase) return;
+
+    let activeUserId = GUEST_USER_ID;
+    try {
+        const { data: { user } } = await supabase.auth.getUser().catch(() => ({ data: { user: null } }));
+        if (user) activeUserId = user.id;
+    } catch (_) {}
 
     const { data } = await supabase
         .from('shopping_journey')
@@ -151,7 +163,7 @@ export async function saveJourneySnapshot(sessionId: string, state: string): Pro
         .upsert({
             id: `jou-${sessionId}`,
             session_id:     sessionId,
-            user_id:        "00000000-0000-0000-0000-000000000000",
+            user_id:        activeUserId,
             journey_state:  updatedSnapshot,
             updated_at:     new Date().toISOString()
         }, { onConflict: 'session_id' });

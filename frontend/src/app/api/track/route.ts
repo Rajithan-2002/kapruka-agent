@@ -17,9 +17,17 @@ export async function POST(request: Request) {
         }
 
         // Track standard actions in purchase history
-        const standardActions = ["viewed", "purchased", "reordered", "added_to_bundle"];
+        const standardActions = ["viewed", "purchased", "reordered", "added_to_bundle", "expand"];
         if (standardActions.includes(action)) {
             await trackProductAction(userId, product, action as any, sessionContext);
+        }
+
+        // Stage category interactions for anonymous users
+        const sessionId = sessionContext?.sessionId;
+        const isAnonymous = userId === "00000000-0000-0000-0000-000000000000";
+        if (isAnonymous && sessionId && product.category) {
+            const { AnonymousSessionService } = await import("@/lib/services/anonymousSessionService");
+            AnonymousSessionService.recordInteraction(sessionId, product.category, product.id);
         }
 
         // If purchased or reordered, update behavior profile stats
@@ -31,7 +39,6 @@ export async function POST(request: Request) {
         }
 
         // Log community analytics using active session snapshot variables
-        const sessionId = sessionContext?.sessionId;
         let recipient: string | null = null;
         let occasion: string | null = null;
         let budget: string | null = null;

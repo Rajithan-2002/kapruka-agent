@@ -7,6 +7,7 @@ export interface ValidationContext {
     budgetNormalized?: { min?: number | null, max?: number | null, target?: number | null } | null;
     searchQuery: string;
     mappedCategory?: string;
+    originalMessage?: string;
 }
 
 export interface Product {
@@ -34,10 +35,83 @@ export interface LifecycleLog {
     justifications: string[];
 }
 
+export interface AdultIntentDetectorResult {
+    isAdultIntent: boolean;
+    confidence: number;
+}
+
+export class AdultIntentDetector {
+    private static englishKeywords = [
+        "adult toy", "sex toy", "sexual wellness", "intimate product", "lingerie", "romantic adult gift",
+        "erotic", "dildo", "vibrator", "lubricant", "condom", "masturbator", "sexual"
+    ];
+
+    private static sinhalaKeywords = [
+        "වැඩිහිටි සෙල්ලම් බඩු", "ලිංගික", "වැඩිහිටි තෑගි"
+    ];
+
+    private static tamilKeywords = [
+        "பாலியல்", "வயது வந்தோர்", "காம", "வயதுவந்தோர் தையல்", "உறவு"
+    ];
+
+    public static detect(input: string): AdultIntentDetectorResult {
+        const lowerInput = input.toLowerCase().trim();
+        if (!lowerInput) {
+            return { isAdultIntent: false, confidence: 0 };
+        }
+
+        const hasEnglish = this.englishKeywords.some(kw => lowerInput.includes(kw));
+        const hasSinhala = this.sinhalaKeywords.some(kw => lowerInput.includes(kw));
+        const hasTamil = this.tamilKeywords.some(kw => lowerInput.includes(kw));
+
+        // If there's any child keyword, it overrides the adult intent immediately
+        const childKeywords = ["kids", "child", "children", "baby", "newborn", "son", "daughter", "toys", "toy", "teddy bear", "teddy", "baby shower", "soft toy"];
+        const hasChild = childKeywords.some(kw => lowerInput.includes(kw));
+
+        if (hasChild) {
+            return { isAdultIntent: false, confidence: 0 };
+        }
+
+        if (hasEnglish || hasSinhala || hasTamil) {
+            return { isAdultIntent: true, confidence: 1.0 };
+        }
+
+        return { isAdultIntent: false, confidence: 0 };
+    }
+}
+
+export function applyChildContextFilter(products: Product[], query: string) {
+    const lowerQuery = query.toLowerCase();
+    const childKeywords = ["kids", "child", "children", "baby", "newborn", "son", "daughter", "toys", "toy", "teddy bear", "teddy", "baby shower", "soft toy"];
+    const isChildQuery = childKeywords.some(kw => lowerQuery.includes(kw));
+
+    if (!isChildQuery) return;
+
+    // Boost & Penalize keywords for category/name matching
+    const boostKeywords = ["toy", "kids", "baby", "child", "education", "book", "plush", "game", "sport", "pencil", "crayon", "clay", "paint", "learning", "puzzle", "lego", "doll"];
+    const penalizeKeywords = ["lingerie", "adult", "men", "women", "perfume", "decor", "jewelry", "jewellery", "romantic", "handbag", "kitchen", "appliance", "office", "cosmetic", "makeup", "facial", "cologne", "watch", "flower", "bouquet", "rose"];
+
+    products.forEach((prod) => {
+        const name = prod.name.toLowerCase();
+        const rawCategory = prod.category;
+        const category = (typeof rawCategory === 'object' && rawCategory !== null ? ((rawCategory as any).name || (rawCategory as any).id || "") : (rawCategory || "")).toLowerCase();
+
+        const isBoost = boostKeywords.some(kw => name.includes(kw) || category.includes(kw));
+        const isPenalize = penalizeKeywords.some(kw => name.includes(kw) || category.includes(kw));
+
+        if (isBoost) {
+            (prod as any).childBoost = true;
+        }
+        if (isPenalize) {
+            (prod as any).childPenalty = true;
+        }
+    });
+}
+
 function isAdultProduct(name: string, category: string): boolean {
     const keywords = [
         "cigarette", "tobacco", "cigar", "vape", "nicotine", "alcohol", "liquor", "wine", "beer", "whiskey", "vodka", "rum",
-        "adult", "sexual", "erotic", "dildo", "masturbator", "sex toy", "intimate", "lubricant", "condom", "vibrator"
+        "adult", "sexual", "erotic", "dildo", "masturbator", "sex toy", "intimate", "lubricant", "condom", "vibrator", "lingerie"
     ];
     return keywords.some(kw => name.includes(kw) || category.includes(kw));
 }
@@ -91,9 +165,17 @@ export function validateProducts(
 
     const intentLower = context.userIntent.toLowerCase();
 
+    // 1. Detect Adult Intent and Child Context Filter
+    const rawMessage = context.originalMessage || context.userIntent || "";
+    const adultDetection = AdultIntentDetector.detect(rawMessage + " " + context.searchQuery);
+    const isAdultIntent = adultDetection.isAdultIntent;
+
+    applyChildContextFilter(products, rawMessage + " " + context.searchQuery);
+
     for (const prod of products) {
         const prodName = prod.name.toLowerCase();
-        const prodCategory = (prod.category || "").toLowerCase();
+        const rawCategory = prod.category;
+        const prodCategory = (typeof rawCategory === 'object' && rawCategory !== null ? ((rawCategory as any).name || (rawCategory as any).id || "") : (rawCategory || "")).toLowerCase();
         
         let isRejected = false;
         let rejectionReason = "";
@@ -101,7 +183,8 @@ export function validateProducts(
         const passedStages: string[] = [];
 
         // STAGE 1: HARD FILTER LAYER (Airport Security)
-        if (isAdultProduct(prodName, prodCategory) && !intentLower.includes("cigarette") && !intentLower.includes("alcohol") && !intentLower.includes("wine")) {
+        const isAdult = isAdultProduct(prodName, prodCategory);
+        if (isAdult && !isAdultIntent && !intentLower.includes("cigarette") && !intentLower.includes("alcohol") && !intentLower.includes("wine")) {
             isRejected = true;
             failedStage = "Stage 1: Hard Filter";
             rejectionReason = "Adult/erotic item rejected from general recommendations";

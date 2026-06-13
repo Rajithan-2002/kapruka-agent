@@ -73,7 +73,7 @@ export class SessionSnapshotEngine {
                     .upsert({
                         id: `jou-${sessionId}`,
                         session_id: sessionId,
-                        user_id: "00000000-0000-0000-0000-000000000000", // Fallback guest user ID
+                        user_id: "22222222-2222-2222-2222-222222222222", // Fallback guest user ID
                         journey_state: updated,
                         updated_at: new Date().toISOString()
                     }, { onConflict: "id" });

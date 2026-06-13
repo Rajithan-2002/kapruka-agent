@@ -349,7 +349,21 @@ async function processPostRequest(
 
         // Hardcoded Intent mapping for UI Quick Tap Chips
         const exactMessage = message.trim();
-        if (exactMessage === "🎂 Gift for someone") {
+        if (exactMessage.startsWith("Occasion:")) {
+             const occName = exactMessage.replace("Occasion:", "").trim().toLowerCase();
+             understandingPlan.intent = "GIFTING";
+             understandingPlan.is_shopping_request = true;
+             understandingPlan.product_type = "UNKNOWN";
+             understandingPlan.occasion = { type: occName, confidence: 1.0 };
+             if (understandingPlan.intelligenceData) {
+                 understandingPlan.intelligenceData.intent = "GIFTING";
+                 understandingPlan.intelligenceData.readyForRecommendation = false;
+                 understandingPlan.intelligenceData.situation = {
+                     ...understandingPlan.intelligenceData.situation,
+                     occasion: occName
+                 };
+             }
+        } else if (exactMessage === "🎂 Gift for someone") {
              understandingPlan.intent = "GIFTING";
              understandingPlan.is_shopping_request = true;
              understandingPlan.product_type = "UNKNOWN";
@@ -989,7 +1003,8 @@ async function processPostRequest(
                         budget: understandingPlan.budget?.target || undefined,
                         budgetNormalized: understandingPlan.budget || undefined,
                         searchQuery: plan.mcp_search_query || "",
-                        mappedCategory: understandingPlan.mapped_category || "UNKNOWN"
+                        mappedCategory: understandingPlan.mapped_category || "UNKNOWN",
+                        originalMessage: message
                     },
                     logs
                 );

@@ -14,6 +14,7 @@ import { createClient } from "@/lib/supabase/client";
 import { User } from "@supabase/supabase-js";
 import GodPanel from "./GodPanel";
 import MemoryVault from "./MemoryVault";
+import { OccasionEngine } from "@/lib/occasionEngine";
 
 const getUniqueId = (prefix: string): string => `${prefix}-${Date.now()}`;
 
@@ -410,7 +411,7 @@ export default function ChatWindow() {
   const loadLandingProducts = async () => {
     setIsLoadingLandingProducts(true);
     try {
-      const res = await fetch("/api/landing-products");
+      const res = await fetch(`/api/landing-products?sessionId=${activeConversationId || ""}&t=${Date.now()}`);
       const data = await res.json();
       if (data.popularBundles && data.popularBundles.length > 0) {
         setLandingBundles(data.popularBundles);
@@ -1155,16 +1156,8 @@ export default function ChatWindow() {
           </div>
 
           <div className="flex items-center gap-2">
-            {activeMemories.length > 0 && activeTab === "chat" && (
-              <div className="hidden lg:flex items-center gap-1 bg-violet-50 border border-violet-100 rounded-xl px-2.5 py-1">
-                <span className="text-[10px] font-bold text-violet-700 flex items-center gap-1">
-                  <BrainCircuit className="w-3 h-3" /> Context:
-                </span>
-                <span className="text-[10px] text-violet-600 font-bold truncate max-w-[120px]">
-                  {activeMemories.join(", ")}
-                </span>
-              </div>
-            )}
+            {/* Top context pill removed per request */}
+
 
             <button
               onClick={toggleGodMode}
@@ -1325,38 +1318,17 @@ export default function ChatWindow() {
               <div className="space-y-2.5">
                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Occasions</span>
                 <div className="grid grid-cols-2 gap-2.5">
-                  <button
-                    onClick={() => {
-                      startNewChatAndSendMessage("🎂 Birthday gift options under LKR 5000");
-                    }}
-                    className="flex items-center gap-3 p-3 bg-white border border-slate-100 rounded-xl hover:border-violet-300 hover:bg-violet-50/20 text-slate-700 font-bold transition-all text-xs text-left shadow-sm active:scale-95"
-                  >
-                    <span className="text-lg">🎂</span> Birthday
-                  </button>
-                  <button
-                    onClick={() => {
-                      startNewChatAndSendMessage("❤️ Anniversary package for my spouse");
-                    }}
-                    className="flex items-center gap-3 p-3 bg-white border border-slate-100 rounded-xl hover:border-violet-300 hover:bg-violet-50/20 text-slate-700 font-bold transition-all text-xs text-left shadow-sm active:scale-95"
-                  >
-                    <span className="text-lg">❤️</span> Anniversary
-                  </button>
-                  <button
-                    onClick={() => {
-                      startNewChatAndSendMessage("🎓 Graduation congrats hamper");
-                    }}
-                    className="flex items-center gap-3 p-3 bg-white border border-slate-100 rounded-xl hover:border-violet-300 hover:bg-violet-50/20 text-slate-700 font-bold transition-all text-xs text-left shadow-sm active:scale-95"
-                  >
-                    <span className="text-lg">🎓</span> Graduation
-                  </button>
-                  <button
-                    onClick={() => {
-                      startNewChatAndSendMessage("👶 Baby Shower gift items list");
-                    }}
-                    className="flex items-center gap-3 p-3 bg-white border border-slate-100 rounded-xl hover:border-violet-300 hover:bg-violet-50/20 text-slate-700 font-bold transition-all text-xs text-left shadow-sm active:scale-95"
-                  >
-                    <span className="text-lg">👶</span> Baby Shower
-                  </button>
+                  {OccasionEngine.getActiveOccasions().map((occ) => (
+                    <button
+                      key={occ.name}
+                      onClick={() => {
+                        startNewChatAndSendMessage(`Occasion: ${occ.name}`);
+                      }}
+                      className="flex items-center gap-3 p-3 bg-white border border-slate-100 rounded-xl hover:border-violet-300 hover:bg-violet-50/20 text-slate-700 font-bold transition-all text-xs text-left shadow-sm active:scale-95 cursor-pointer"
+                    >
+                      <span className="text-lg">{occ.emoji}</span> {occ.label}
+                    </button>
+                  ))}
                 </div>
               </div>
 
@@ -1683,61 +1655,8 @@ export default function ChatWindow() {
                   )}
                 </div>
 
-                {/* Conversation Context Dock */}
-                {sessionSnapshot && (sessionSnapshot.recipient || sessionSnapshot.occasion || (sessionSnapshot.budget && sessionSnapshot.budget !== 0)) && (
-                  <div className="shrink-0 bg-violet-50 border-t border-violet-100 px-4 py-2.5 flex items-center justify-between">
-                    <div className="flex flex-wrap gap-x-3 gap-y-1 items-center">
-                      <span className="text-[10px] font-black text-violet-750 uppercase tracking-widest flex items-center gap-1">
-                        🎁 ACTIVE CONTEXT:
-                      </span>
-                      {sessionSnapshot.recipient && sessionSnapshot.recipient !== "UNKNOWN" && (
-                        <span className="text-xs font-bold text-violet-800">
-                          For {sessionSnapshot.recipient}
-                        </span>
-                      )}
-                      {sessionSnapshot.occasion && sessionSnapshot.occasion !== "UNKNOWN" && (
-                        <span className="text-xs font-bold text-violet-800">
-                          • {sessionSnapshot.occasion}
-                        </span>
-                      )}
-                      {sessionSnapshot.budget && sessionSnapshot.budget !== 0 && sessionSnapshot.budget !== "UNKNOWN" && (
-                        <span className="text-xs font-bold text-rose-600">
-                          • LKR {sessionSnapshot.budget.toLocaleString()}
-                        </span>
-                      )}
-                    </div>
-                    <button
-                      onClick={async () => {
-                        if (confirm("Would you like to clear the current gifting session context?")) {
-                          try {
-                            await fetch(`/api/chat`, {
-                              method: "POST",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({
-                                message: "reset context",
-                                history: [],
-                                sessionId: activeConversationId
-                              })
-                            });
-                            if (activeConversationId) {
-                              loadActiveSnapshot(activeConversationId);
-                            }
-                            setMessages(prev => [...prev, {
-                              id: `reset-${Date.now()}`,
-                              role: "assistant",
-                              content: "Gifting context cleared! What can I help you find now? 😊"
-                            }]);
-                          } catch (e) {
-                            console.error(e);
-                          }
-                        }
-                      }}
-                      className="text-[10px] bg-white border border-violet-200 text-violet-600 hover:bg-violet-100 px-2 py-0.5 rounded font-black active:scale-95 transition-all cursor-pointer"
-                    >
-                      Reset
-                    </button>
-                  </div>
-                )}
+                {/* Bottom Active Context Section removed per request */}
+
 
                 {/* Dynamic Sticky Action Bar */}
                 <div className="shrink-0 bg-white border-t border-slate-100 px-4 py-2 overflow-x-auto scrollbar-none flex gap-2">
