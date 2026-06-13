@@ -33,6 +33,7 @@ export interface SessionSnapshot {
     recommendedProducts: any[];
     searchSession?: SearchSession;
     bundleSession?: BundleSession;
+    askedQuestions?: string[];
     lastUpdated: string;
 }
 

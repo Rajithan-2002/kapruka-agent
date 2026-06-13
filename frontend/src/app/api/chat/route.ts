@@ -34,6 +34,7 @@ import { ProductAdapter } from "@/lib/intelligence/types/ProductAdapter";
 import { CanonicalProductV1 } from "@/lib/intelligence/types/CanonicalProduct";
 import { TraceCollector } from "@/lib/intelligence/observability/traceCollector";
 import { randomUUID } from "crypto";
+import { godModeStorage } from "@/lib/intelligence/observability/godmode/storage";
 
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
@@ -42,11 +43,72 @@ const openai = new OpenAI({
 import { KAPPY_PERSONA_INSTRUCTION } from "@/lib/masterPrompt";
 
 export async function POST(request: Request) {
-    // Initialize trace and decision ids for full pipeline correlation
+    let requestBody: any = {};
+    try {
+        requestBody = await request.json();
+    } catch (e: any) {
+        import('fs').then(fs => fs.writeFileSync('hard_crash.log', e.stack || e.message));
+        return new NextResponse(JSON.stringify({ error: "Invalid JSON" }), { status: 400 });
+    }
+
+    try {
+        const { sessionId, godModeEnabled } = requestBody;
+    const isSampled = !godModeEnabled && Math.random() < Number(process.env.TELEMETRY_SAMPLING_RATE || 0.001);
+
     const traceId = randomUUID();
     const decisionId = randomUUID();
-    const sessionTraces: any[] = [];
     const traceStartTime = Date.now();
+
+    const supabase = await createClient();
+    let userId = "00000000-0000-0000-0000-000000000000";
+    let userName = "friend";
+    try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+            userId = user.id;
+            const fullName = user.user_metadata?.full_name || user.user_metadata?.name || "";
+            const firstName = fullName ? fullName.split(" ")[0] : "";
+            userName = firstName || "friend";
+        }
+    } catch (_) {}
+
+    const activeSessionId = sessionId || `session-${Date.now()}`;
+
+    // Always execute inside God Mode storage context so telemetry is captured for every interaction
+    const context = {
+        traceId,
+        userId,
+        enabled: true,
+        telemetryEvents: [],
+        productLifecycles: {},
+        replaySteps: [],
+        confidenceFactors: { positive: [], negative: [] },
+        sessionSummary: {},
+        engineHealth: {},
+        startTime: traceStartTime
+    };
+    return await godModeStorage.run(context, async () => 
+        await processPostRequest(requestBody, userId, userName, activeSessionId, traceId, decisionId, traceStartTime, !!godModeEnabled, isSampled)
+    );
+    } catch (e: any) {
+        import('fs').then(fs => fs.writeFileSync('hard_crash.log', e.stack || e.message));
+        return NextResponse.json({ error: "Hard crash", details: e.message }, { status: 500 });
+    }
+}
+
+async function processPostRequest(
+    requestBody: any,
+    userId: string,
+    userName: string,
+    activeSessionId: string,
+    traceId: string,
+    decisionId: string,
+    traceStartTime: number,
+    godModeEnabled: boolean,
+    isSampled: boolean
+) {
+    const sessionTraces: any[] = [];
+    const { message, history } = requestBody;
 
     try {
         const { CircuitBreaker } = await import("@/lib/intelligence/services/circuitBreaker");
@@ -76,17 +138,6 @@ export async function POST(request: Request) {
                 headers: { "Content-Type": "application/json" }
             });
         }
-
-        const supabase = await createClient();
-        const { data: { user } } = await supabase.auth.getUser();
-
-        const userId = user ? user.id : "00000000-0000-0000-0000-000000000000";
-        const fullName = user?.user_metadata?.full_name || user?.user_metadata?.name || "";
-        const firstName = fullName ? fullName.split(" ")[0] : "";
-        const userName = firstName || "friend";
-
-        const { message, history, sessionId } = await request.json();
-        const activeSessionId = sessionId || `session-${Date.now()}`;
 
         // Record interaction for progressive relationship building
         await recordInteraction(userId);
@@ -151,6 +202,19 @@ export async function POST(request: Request) {
         let activeContextTags = relevanceResult.relevantMemories.map(m => {
             const rendered = MemoryPresentationLayer.renderMemory(m);
             return `${rendered.category}: ${rendered.text}`;
+        });
+
+        // Log memory usage for God Mode
+        const { LearningEvidenceService } = await import("@/lib/intelligence/observability/godmode/learningEvidenceService");
+        decayedMemories.forEach(m => {
+            const isUsed = relevanceResult.relevantMemories.some(rm => rm.id === m.id);
+            const rendered = MemoryPresentationLayer.renderMemory(m);
+            const memoryText = rendered.text;
+            LearningEvidenceService.logMemoryUsage(
+                memoryText, 
+                isUsed ? "USED" : "IGNORED", 
+                isUsed ? "Confidence score meets relevance threshold" : "Low semantic alignment with query"
+            );
         });
 
         const memoryTrace = await TraceCollector.logExecution(
@@ -423,7 +487,16 @@ export async function POST(request: Request) {
               message.toLowerCase().includes("sort")))
         ) : false;
 
-        if (snapshot && isContinuation) {
+        // V1.0 Demo Stabilization - Query Drift & Context Overwrite Fix
+        // If the user's message is short (under 5 words) and there is an active snapshot with a previous search query,
+        // treat it as a Context Update answering a clarification question, NOT a new context override search.
+        const isContextUpdate = snapshot ? (
+            message.split(/\s+/).length <= 5 && 
+            (snapshot.searchSession?.query || snapshot.recipient || snapshot.occasion) &&
+            (!understandingPlan.intent || understandingPlan.intent === "SHOPPING" || understandingPlan.intent === "UNKNOWN")
+        ) : false;
+
+        if (snapshot && (isContinuation || isContextUpdate)) {
             console.log("[Context Retention] Continuation detected. Merging previous parameters from snapshot:", {
                 recipient: snapshot.recipient,
                 occasion: snapshot.occasion,
@@ -477,7 +550,7 @@ export async function POST(request: Request) {
 
         const { winner, trace } = engine.evaluate(ruleContext);
         let plan = ActionRouter.mapDecision(winner, understandingPlan.intent);
-        if (snapshot && !isContinuation) {
+        if (snapshot && !isContinuation && !isContextUpdate) {
             plan.is_context_override = true;
         }
 
@@ -627,7 +700,6 @@ export async function POST(request: Request) {
             }
         });
 
-        // 5. EXECUTE MCP TOOL OR RUN LOGIC
         let toolResults: unknown = null;
         let productsList: any[] = [];
         let isAllRequested = false;
@@ -635,6 +707,10 @@ export async function POST(request: Request) {
         let previousSearchSession: any | null = null;
         let trackingData: any = null;
         let traceReport: any = null;
+        let rawProductCount = 0;
+        let deduplicatedCount = 0;
+        let filteredCount = 0;
+        let semanticRemovedCount = 0;
         // Track bundle creation state
         let bundleOptions: unknown[] = [];
         // Track gift message state
@@ -718,11 +794,11 @@ export async function POST(request: Request) {
             const mode = plan.recommendation_mode || "recommendation";
             let finalRankedList: any[] = [];
             let cacheRemaining = 0;
-            let rawProductCount = 0;
-            let filteredCount = 0;
-            let semanticRemovedCount = 0;
-            let deduplicatedCount = 0;
-            let traceId = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString();
+            rawProductCount = 0;
+            filteredCount = 0;
+            semanticRemovedCount = 0;
+            deduplicatedCount = 0;
+            // Use the outer request-level traceId to link the observability reports
             let logs: any[] = [];
             let rankingResult: any = null;
             let rankingStartTime = 0;
@@ -807,6 +883,12 @@ export async function POST(request: Request) {
             }
 
             if (plan.mcp_tool_needed === "kapruka_search_products") {
+                const { GodTelemetryService } = await import("@/lib/intelligence/observability/godmode/telemetryService");
+                const { ProductAuditService } = await import("@/lib/intelligence/observability/godmode/productAuditService");
+                const { ReplayService } = await import("@/lib/intelligence/observability/godmode/replayService");
+
+                GodTelemetryService.emit("Retrieval Engine", "RUNNING", { query: plan.mcp_search_query });
+
                 const translatedQuery = await translateSearchQuery(plan.mcp_search_query || "");
                 let rawProducts = await mcpSearchProducts(translatedQuery, 40);
                 
@@ -854,14 +936,47 @@ export async function POST(request: Request) {
                 }
 
                 rawProductCount = rawProducts.length;
+                GodTelemetryService.emit("Retrieval Engine", "COMPLETED", { query: plan.mcp_search_query, count: rawProductCount });
+                ReplayService.recordStep("Product Retrieval", { query: plan.mcp_search_query }, { count: rawProductCount, products: rawProducts });
 
                 // Map to standardized format using ProductAdapter
                 const mappedProducts: CanonicalProductV1[] = rawProducts.map(p => ProductAdapter.adaptMCPProduct(p));
                 ProductAdapter.assertCanonicalProducts(mappedProducts, "MCP Retrieval");
 
+                mappedProducts.forEach((p: any) => {
+                    ProductAuditService.transition(
+                        p.id,
+                        p.name,
+                        "RETRIEVED",
+                        "APPROVED",
+                        "Retrieved from Kapruka catalog search"
+                    );
+                });
+
                 // 1. Deduplication First
                 const dedupedProducts = deduplicateProducts(mappedProducts, "Kapruka Search Recommendations");
                 deduplicatedCount = rawProducts.length - dedupedProducts.length;
+
+                const dedupedCandidateIds = new Set(dedupedProducts.map(p => p.id));
+                mappedProducts.forEach((p: any) => {
+                    if (!dedupedCandidateIds.has(p.id)) {
+                        ProductAuditService.transition(
+                            p.id,
+                            p.name,
+                            "DEDUPLICATED",
+                            "REJECTED",
+                            "Duplicate item filtered from results"
+                        );
+                    } else {
+                        ProductAuditService.transition(
+                            p.id,
+                            p.name,
+                            "DEDUPLICATED",
+                            "APPROVED",
+                            "Unique candidate product retained"
+                        );
+                    }
+                });
 
                 // 2. Strict Filter Engine
                 const validationResult = validateProducts(
@@ -881,6 +996,28 @@ export async function POST(request: Request) {
 
                 filteredCount = validationResult.rejected.length;
                 logs = validationResult.logs;
+
+                validationResult.rejected.forEach((p: any) => {
+                    const item = p;
+                    const log = validationResult.logs.find((l: any) => l.productId === p.id);
+                    const reasons = log?.reason || "Failed hard constraints";
+                    ProductAuditService.transition(
+                        item.id,
+                        item.name,
+                        "HARD_FILTER",
+                        "REJECTED",
+                        reasons
+                    );
+                });
+                validationResult.approved.forEach((item: any) => {
+                    ProductAuditService.transition(
+                        item.id,
+                        item.name,
+                        "HARD_FILTER",
+                        "APPROVED",
+                        "Meets budget, occasion, and recipient requirements"
+                    );
+                });
 
                 // Phase 4: Call mcpCheckDelivery before ranking when a target city is supplied
                 const targetCity = understandingPlan.intelligenceData?.situation?.location || plan.delivery_city;
@@ -915,11 +1052,47 @@ export async function POST(request: Request) {
                         }
                     });
 
+                    validationResult.approved.forEach((p: any) => {
+                        const pid = p.id || p.product_id;
+                        const deliverable = availableIds.has(pid);
+                        ProductAuditService.transition(
+                            pid,
+                            p.name,
+                            "DELIVERY_FILTER",
+                            deliverable ? "APPROVED" : "REJECTED",
+                            deliverable ? `Deliverable to ${targetCity}` : `Not deliverable to ${targetCity}`
+                        );
+                    });
+
                     deliveryFilteredApproved = validationResult.approved.filter((p: any) => 
                         availableIds.has(p.id || p.product_id)
                     );
                     filteredCount += (validationResult.approved.length - deliveryFilteredApproved.length);
+                } else {
+                    validationResult.approved.forEach((p: any) => {
+                        ProductAuditService.transition(
+                            p.id || p.product_id,
+                            p.name,
+                            "DELIVERY_FILTER",
+                            "APPROVED",
+                            "No delivery constraints specified"
+                        );
+                    });
                 }
+
+                ReplayService.recordStep("Filter Verification", 
+                    { inputCount: dedupedProducts.length, targetCity }, 
+                    { 
+                        approved: deliveryFilteredApproved.map((p: any) => ({ id: p.id, name: p.name })), 
+                        rejected: [
+                            ...validationResult.rejected.map((p: any) => {
+                                const log = validationResult.logs.find((l: any) => l.productId === p.id);
+                                return { id: p.id, name: p.name, stage: "HARD_FILTER", reasons: [log?.reason || "Failed hard constraints"] };
+                            }),
+                            ...validationResult.approved.filter((p: any) => deliveryFilteredApproved.every((d: any) => d.id !== p.id)).map((p: any) => ({ id: p.id, name: p.name, stage: "DELIVERY_FILTER", reasons: [`Not deliverable to ${targetCity}`] }))
+                        ]
+                    }
+                );
 
                 // 3. Scoring Engine
                 const dedupedIds = new Set(deliveryFilteredApproved.map((p: any) => p.id));
@@ -998,18 +1171,53 @@ export async function POST(request: Request) {
                 };
 
                 rankingStartTime = Date.now();
+                GodTelemetryService.emit("Ranking Engine", "RUNNING", { candidatesCount: approvedMcpProducts.length });
                 const rankedCandidates = RankingEngine.rankProducts(approvedMcpProducts, rankingContext);
-                
+                GodTelemetryService.emit("Ranking Engine", "COMPLETED", { outputCount: rankedCandidates.length });
+
+                rankedCandidates.forEach((c: any) => {
+                    ProductAuditService.transition(
+                        c.productId,
+                        c.productData.name,
+                        "RANKED",
+                        "APPROVED",
+                        `Ranked with score: ${(c.finalScore * 100).toFixed(1)}% (Budget: ${(c.budgetScore * 100).toFixed(0)}%, Affinity: ${(c.affinityScore * 100).toFixed(0)}%, Recipient: ${(c.recipientScore * 100).toFixed(0)}%)`
+                    );
+                });
+
+                ReplayService.recordStep("Relevance Ranking", 
+                    { candidatesCount: approvedMcpProducts.length, context: rankingContext }, 
+                    { ranked: rankedCandidates.map(c => ({ id: c.productId, name: c.productData.name, score: c.finalScore })) }
+                );
+
                 // --- STAGE 3: SEMANTIC GARBAGE FILTER ---
                 const { runSemanticIrrelevanceFilter } = await import("@/lib/intelligence/recommendation/semanticFilter");
+                GodTelemetryService.emit("Semantic Filter", "RUNNING", { count: rankedCandidates.length });
                 const irrelevantIds = await runSemanticIrrelevanceFilter(
                     plan.shopping_stage || plan.mcp_search_query || "",
                     understandingPlan.mapped_category || "UNKNOWN",
                     rankedCandidates.map(c => ({ id: c.productId, name: c.productData.name, category: c.productData.category }))
                 );
-                
+                GodTelemetryService.emit("Semantic Filter", "COMPLETED", { irrelevantCount: irrelevantIds.length });
+
+                rankedCandidates.forEach((c: any) => {
+                    const isIrrelevant = irrelevantIds.includes(c.productId);
+                    ProductAuditService.transition(
+                        c.productId,
+                        c.productData.name,
+                        "SEMANTIC_FILTER",
+                        isIrrelevant ? "REJECTED" : "APPROVED",
+                        isIrrelevant ? "Filtered by LLM as semantically irrelevant to request" : "Validated as semantically relevant"
+                    );
+                });
+
                 const finalSemanticRanked = rankedCandidates.filter(c => !irrelevantIds.includes(c.productId));
                 semanticRemovedCount = rankedCandidates.length - finalSemanticRanked.length;
+
+                ReplayService.recordStep("Semantic Guardrail", 
+                    { inputCount: rankedCandidates.length, irrelevantIds }, 
+                    { finalCount: finalSemanticRanked.length, finalProducts: finalSemanticRanked.map(c => ({ id: c.productId, name: c.productData.name, score: c.finalScore })) }
+                );
                 // ----------------------------------------
                 
                 const rankingTrace = await TraceCollector.logExecution(
@@ -1792,7 +2000,7 @@ ${understandingPlan.intent !== "GREETING" && understandingPlan.intelligenceData?
             const data = new StreamData();
             data.append({
                 activeMemories: [...dynamicContextTags, ...activeContextTags],
-                traceReport: null,
+                traceReport: { trace_id: traceId },
                 intelligenceTrace: intelligence?.traces || null,
                 judgeModeTrace: judgePayload
             } as any);
@@ -1803,7 +2011,7 @@ ${understandingPlan.intent !== "GREETING" && understandingPlan.intelligenceData?
                 role: "assistant",
                 content: msg,
                 activeMemories: [...dynamicContextTags, ...activeContextTags],
-                traceReport: null,
+                traceReport: { trace_id: traceId },
                 intelligenceTrace: intelligence?.traces || null,
                 judgeModeTrace: judgePayload,
                 followUpSuggestions: (toolResults as any).followUpSuggestions || null
@@ -1820,7 +2028,7 @@ ${understandingPlan.intent !== "GREETING" && understandingPlan.intelligenceData?
         const data = new StreamData();
         const dataPayload: any = {
             activeMemories: [...dynamicContextTags, ...activeContextTags],
-            traceReport: traceReport || null,
+            traceReport: traceReport || { trace_id: traceId },
             intelligenceTrace: intelligence?.traces || null,
             judgeModeTrace: judgePayload,
             transparencyMessage: transparencyMessage || (toolResults as any)?.transparencyMessage || null,
@@ -1845,6 +2053,8 @@ ${understandingPlan.intent !== "GREETING" && understandingPlan.intelligenceData?
 
         data.append(dataPayload);
 
+        const capturedStore = godModeStorage.getStore();
+
         const openaiClient = new OpenAI();
         const completion = await openaiClient.chat.completions.create({
             model: "gpt-4o-mini",
@@ -1857,50 +2067,121 @@ ${understandingPlan.intent !== "GREETING" && understandingPlan.intelligenceData?
 
         const stream = OpenAIStream(completion, {
             onCompletion: async (text) => {
-                // Save persistent state asynchronously
-                await saveChatMessage(userId, activeSessionId, "assistant", text, {
-                    intent: understandingPlan.intent,
-                    detected_tone: detectedTone,
-                    products_shown: productsList.length,
-                    products_list: productsList,
-                    isAllRequested,
-                    initialVisibleCount,
-                    tracking_data: trackingData,
-                    bundleOptions: bundleOptions,
-                    giftMessages: giftMessageOptions,
-                    traceId: traceReport?.trace_id,
-                    traceReport: traceReport || null,
-                    intelligenceTrace: judgePayload || null,
-                    activeMemories: [...dynamicContextTags, ...activeContextTags]
-                });
+                try {
+                    // Save persistent state asynchronously
+                    await saveChatMessage(userId, activeSessionId, "assistant", text, {
+                        intent: understandingPlan.intent,
+                        detected_tone: detectedTone,
+                        products_shown: productsList.length,
+                        products_list: productsList,
+                        isAllRequested,
+                        initialVisibleCount,
+                        tracking_data: trackingData,
+                        bundleOptions: bundleOptions,
+                        giftMessages: giftMessageOptions,
+                        traceId: traceId || traceReport?.trace_id,
+                        traceReport: traceReport || { trace_id: traceId },
+                        intelligenceTrace: judgePayload || null,
+                        activeMemories: [...dynamicContextTags, ...activeContextTags]
+                    });
+                } catch(e) { console.error("saveChatMessage err", e); }
 
-                // Save updated session snapshot with products, searchSession and bundleSession
-                await SessionSnapshotEngine.saveSnapshot(activeSessionId, {
-                    journeyState: stateMachine.getCurrentState(),
-                    recipient: understandingPlan.extracted_recipient?.type || (shouldClearParams ? null : snapshot?.recipient),
-                    occasion: understandingPlan.extracted_occasion?.type || (shouldClearParams ? null : snapshot?.occasion),
-                    budget: understandingPlan.budget?.target || (shouldClearParams ? null : snapshot?.budget),
-                    activeBundle: snapshot?.activeBundle || [],
-                    recommendedProducts: productsList || [],
-                    searchSession: {
-                        query: understandingPlan.product_type || (shouldClearParams ? null : snapshot?.searchSession?.query),
-                        recipient: understandingPlan.extracted_recipient?.type || (shouldClearParams ? null : snapshot?.searchSession?.recipient),
-                        occasion: understandingPlan.extracted_occasion?.type || (shouldClearParams ? null : snapshot?.searchSession?.occasion),
-                        budget: understandingPlan.budget?.target || (shouldClearParams ? null : snapshot?.searchSession?.budget),
-                        filters: shouldClearParams ? null : (understandingPlan.intelligenceData?.price_refinement || snapshot?.searchSession?.filters),
-                        shownProducts: productsList || []
-                    },
-                    bundleSession: {
-                        items: snapshot?.activeBundle || [],
-                        total: snapshot?.activeBundle?.reduce((acc: number, item: any) => acc + (item.price || 0), 0) || 0,
-                        recipient: understandingPlan.extracted_recipient?.type || (shouldClearParams ? null : snapshot?.bundleSession?.recipient),
-                        occasion: understandingPlan.extracted_occasion?.type || (shouldClearParams ? null : snapshot?.bundleSession?.occasion),
-                        budget: understandingPlan.budget?.target || (shouldClearParams ? null : snapshot?.bundleSession?.budget)
+                try {
+                    // Save updated session snapshot with products, searchSession and bundleSession
+                    await SessionSnapshotEngine.saveSnapshot(activeSessionId, {
+                        journeyState: stateMachine.getCurrentState(),
+                        recipient: understandingPlan.extracted_recipient?.type || (shouldClearParams ? null : snapshot?.recipient),
+                        occasion: understandingPlan.extracted_occasion?.type || (shouldClearParams ? null : snapshot?.occasion),
+                        budget: understandingPlan.budget?.target || (shouldClearParams ? null : snapshot?.budget),
+                        activeBundle: snapshot?.activeBundle || [],
+                        recommendedProducts: productsList || [],
+                        searchSession: {
+                            query: understandingPlan.product_type || (shouldClearParams ? null : snapshot?.searchSession?.query),
+                            recipient: understandingPlan.extracted_recipient?.type || (shouldClearParams ? null : snapshot?.searchSession?.recipient),
+                            occasion: understandingPlan.extracted_occasion?.type || (shouldClearParams ? null : snapshot?.searchSession?.occasion),
+                            budget: understandingPlan.budget?.target || (shouldClearParams ? null : snapshot?.searchSession?.budget),
+                            filters: shouldClearParams ? null : (understandingPlan.intelligenceData?.price_refinement || snapshot?.searchSession?.filters),
+                            shownProducts: productsList || []
+                        },
+                        bundleSession: {
+                            items: snapshot?.activeBundle || [],
+                            total: snapshot?.activeBundle?.reduce((acc: number, item: any) => acc + (item.price || 0), 0) || 0,
+                            recipient: understandingPlan.extracted_recipient?.type || (shouldClearParams ? null : snapshot?.bundleSession?.recipient),
+                            occasion: understandingPlan.extracted_occasion?.type || (shouldClearParams ? null : snapshot?.bundleSession?.occasion),
+                            budget: understandingPlan.budget?.target || (shouldClearParams ? null : snapshot?.bundleSession?.budget)
+                        },
+                        askedQuestions: [
+                            ...(snapshot?.askedQuestions || []),
+                            ...(winner?.action === "CLARIFY" && (winner as any).targetField ? [(winner as any).targetField] : [])
+                        ]
+                    });
+                } catch(e) { console.error("saveSnapshot err", e); }
+
+                try {
+                    if (detectedTone && detectedTone !== "neutral") {
+                        await updateUserTone(userId, detectedTone);
                     }
-                });
+                } catch(e) { console.error("updateUserTone err", e); }
 
-                if (detectedTone && detectedTone !== "neutral") {
-                    await updateUserTone(userId, detectedTone);
+                // KAPPY GOD MODE TELEMETRY PERSISTENCE - Always persist telemetry
+                if (true) {
+                    try {
+                        if (capturedStore) {
+                            const supabaseClient = await createClient();
+                            
+                            // Compile confidence explanations
+                            const positive: string[] = [];
+                            const negative: string[] = [];
+                            if (understandingPlan.budget?.target) positive.push("Budget identified");
+                            else negative.push("Budget limit not set");
+                            
+                            if (understandingPlan.recipient?.type && understandingPlan.recipient.type !== "unknown") positive.push("Recipient identified");
+                            else negative.push("Recipient preferences unknown");
+                            
+                            if (understandingPlan.occasion?.type && understandingPlan.occasion.type !== "unknown") positive.push("Occasion identified");
+                            else negative.push("Occasion not specified");
+                            
+                            if (productsList && productsList.length > 0) positive.push("Candidate products matched successfully");
+                            else negative.push("No catalog matching products found");
+
+                            const confidenceExplanation = { positive, negative };
+
+                            // Compile session summary
+                            const sessionSummary = {
+                                intent: understandingPlan.intent || "unknown",
+                                recipient: understandingPlan.recipient?.type || "unknown",
+                                occasion: understandingPlan.occasion?.type || "unknown",
+                                budget: understandingPlan.budget?.target || null,
+                                evaluatedCount: rawProductCount || 0,
+                                filteredCount: (deduplicatedCount || 0) + (filteredCount || 0) + (semanticRemovedCount || 0),
+                                winningProductId: productsList[0]?.id || null,
+                                winningProductName: productsList[0]?.name || null,
+                                confidence: intelligence.recommendationConfidence || 0.5,
+                                durationMs: Date.now() - traceStartTime
+                            };
+
+                            const { LearningEvidenceService } = await import("@/lib/intelligence/observability/godmode/learningEvidenceService");
+                            const learningProfile = await LearningEvidenceService.getLearningProfile(userId);
+
+                            const { error: insertError } = await supabaseClient.from("godmode_traces").insert({
+                                trace_id: traceId,
+                                user_id: userId,
+                                telemetry_events: capturedStore.telemetryEvents,
+                                product_lifecycles: Object.values(capturedStore.productLifecycles),
+                                replay_steps: capturedStore.replaySteps,
+                                learning_profile: learningProfile,
+                                confidence_explanation: confidenceExplanation,
+                                session_summary: sessionSummary,
+                                engine_health: capturedStore.engineHealth
+                            });
+                            if (insertError) {
+                                import('fs').then(fs => fs.appendFileSync('telemetry_error.log', 'Insert Error: ' + JSON.stringify(insertError) + '\n'));
+                            }
+                        }
+                    } catch (telemetryError: any) {
+                        console.error("Failed to persist God Mode telemetry:", telemetryError);
+                        import('fs').then(fs => fs.appendFileSync('telemetry_error.log', telemetryError?.message + '\n' + JSON.stringify(telemetryError) + '\n'));
+                    }
                 }
 
                 data.close();

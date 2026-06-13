@@ -12,7 +12,7 @@ import ChatInput from "./ChatInput";
 import ChatMessage, { Message, Product } from "./ChatMessage";
 import { createClient } from "@/lib/supabase/client";
 import { User } from "@supabase/supabase-js";
-import JudgePanel from "./JudgePanel";
+import GodPanel from "./GodPanel";
 import MemoryVault from "./MemoryVault";
 
 const getUniqueId = (prefix: string): string => `${prefix}-${Date.now()}`;
@@ -124,10 +124,25 @@ export default function ChatWindow() {
   const [checkoutUrl, setCheckoutUrl] = useState("");
   const [orderRef, setOrderRef] = useState("");
 
-  // Judge panel / diagnostics
-  const [isJudgeMode, setIsJudgeMode] = useState(false);
-  const [selectedTraceData, setSelectedTraceData] = useState<any>(null);
-  const [isDebugMode, setIsDebugMode] = useState(false);
+  // God Mode Observatory state
+  const [isGodMode, setIsGodMode] = useState(false);
+  const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
+
+  const toggleGodMode = () => {
+    setIsGodMode(prev => {
+      const next = !prev;
+      if (next) {
+        // Find the last assistant message with a trace report id
+        const lastAssistant = [...messages].reverse().find(m => m.role === "assistant" && m.traceReport?.trace_id);
+        if (lastAssistant && lastAssistant.traceReport?.trace_id) {
+          setSelectedTraceId(lastAssistant.traceReport.trace_id);
+        }
+      } else {
+        setSelectedTraceId(null);
+      }
+      return next;
+    });
+  };
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   // Layout mode preview switcher
@@ -544,7 +559,13 @@ export default function ChatWindow() {
         const res = await fetch(`/api/conversations/${activeConversationId}/messages`);
         const data = await res.json();
         if (data.messages) {
-          setMessages(data.messages);
+          setMessages(prev => {
+            // Prevent wiping out optimistically added user messages during session initialization
+            if (data.messages.length === 0 && prev.length > 0 && prev[0].role === "user") {
+                return prev;
+            }
+            return data.messages;
+          });
           const assistantMsgs = data.messages.filter((m: any) => m.role === "assistant");
           if (assistantMsgs.length > 0) {
             const lastAssistantMsg = assistantMsgs[assistantMsgs.length - 1];
@@ -638,7 +659,8 @@ export default function ChatWindow() {
         body: JSON.stringify({
           message: text,
           history: chatHistory,
-          sessionId: overrideSessionId || activeConversationId
+          sessionId: overrideSessionId || activeConversationId,
+          godModeEnabled: isGodMode
         }),
       });
 
@@ -681,15 +703,18 @@ export default function ChatWindow() {
 
       let accumulatedText = "";
       let customData: any = null;
+      let buffer = "";
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split('\n').filter(Boolean);
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || "";
         
         for (const line of lines) {
+          if (!line.trim()) continue;
           if (line.startsWith('0:')) {
             try {
               const textPart = JSON.parse(line.substring(2));
@@ -760,12 +785,12 @@ export default function ChatWindow() {
     }
   };
 
-  // Keyboard shortcut listener for judge mode
+  // Keyboard shortcut listener for god mode
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'd') {
+      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'r') {
         e.preventDefault();
-        setIsJudgeMode(prev => !prev);
+        toggleGodMode();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -1142,20 +1167,11 @@ export default function ChatWindow() {
             )}
 
             <button
-              onClick={() => setIsJudgeMode(!isJudgeMode)}
-              className={`p-2 rounded-xl border transition-all ${isJudgeMode ? "bg-amber-500/10 border-amber-450 text-amber-500" : "bg-slate-50 border-slate-200 text-slate-400 hover:text-slate-600"}`}
-              title="Judge Mode"
+              onClick={toggleGodMode}
+              className={`p-2 rounded-xl border transition-all ${isGodMode ? "bg-cyan-500/10 border-cyan-450 text-cyan-500" : "bg-slate-50 border-slate-200 text-slate-400 hover:text-slate-600"}`}
+              title="God Mode Observatory (CTRL+SHIFT+R)"
             >
               <Activity className="w-4 h-4" />
-            </button>
-
-
-            <button
-              onClick={() => setIsDebugMode(!isDebugMode)}
-              className={`p-2 rounded-xl border transition-all ${isDebugMode ? "bg-violet-50 text-violet-600 border-violet-200" : "bg-slate-50 border-slate-200 text-slate-400 hover:text-slate-600"}`}
-              title="Dev Mode"
-            >
-              <BrainCircuit className="w-4 h-4" />
             </button>
 
             {/* Hamper indicator toggler */}
@@ -1633,19 +1649,15 @@ export default function ChatWindow() {
                       <div 
                         key={msg.id}
                         onClick={() => {
-                          if (isJudgeMode) {
-                            setSelectedTraceData({
-                              traceReport: msg.traceReport,
-                              intelligenceTrace: msg.judgeModeTrace,
-                              message: msg.content
-                            });
+                          if (isGodMode && msg.traceReport?.trace_id) {
+                            setSelectedTraceId(msg.traceReport.trace_id);
                           }
                         }}
-                        className={isJudgeMode ? "cursor-pointer hover:bg-slate-100/50 rounded-xl p-1 -mx-1" : ""}
+                        className={isGodMode && msg.traceReport?.trace_id ? "cursor-pointer hover:bg-slate-100/50 rounded-xl p-1 -mx-1" : ""}
                       >
                         <ChatMessage
                           message={msg}
-                          isDebugMode={isDebugMode}
+                          isGodMode={isGodMode}
                           userId={user?.id}
                           sessionId={activeConversationId}
                           onAddToBundle={addToBundle}
@@ -1785,17 +1797,6 @@ export default function ChatWindow() {
                   <ChatInput onSendMessage={handleSendMessage} disabled={isTyping} placeholder="Ask Kappy..." />
                 </div>
               </div>
-
-              {/* Memory Vault Sidebar (Desktop View / Toggleable) */}
-              {isDebugMode && (
-                <div className="hidden lg:block">
-                  <MemoryVault
-                    relationships={relationships}
-                    preferences={preferences}
-                    activeMemories={activeMemories}
-                  />
-                </div>
-              )}
             </div>
           )}
 
@@ -2499,11 +2500,14 @@ export default function ChatWindow() {
         </div>
       )}
 
-      {/* 9. Judge Wow Panel Sidebar Drawer */}
-      {isJudgeMode && (
-        <JudgePanel 
-          data={selectedTraceData} 
-          onClose={() => setIsJudgeMode(false)} 
+      {/* 9. God Mode Observatory Panel Sidebar Drawer */}
+      {isGodMode && (
+        <GodPanel 
+          traceId={selectedTraceId || ""} 
+          onClose={() => setIsGodMode(false)}
+          relationships={relationships}
+          preferences={preferences}
+          activeMemories={activeMemories} 
         />
       )}
     </div>
