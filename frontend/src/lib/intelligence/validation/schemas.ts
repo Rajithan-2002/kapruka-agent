@@ -90,6 +90,15 @@ export const PriceRefinementSchema = z.object({
   price_band: z.enum(["BUDGET", "MID", "PREMIUM", "LUXURY"]).nullable().optional()
 });
 
+export const ExtractedMemorySchema = z.object({
+  category: z.enum(["preference", "behavior", "relationship", "general"]),
+  relationship: z.string().nullable().optional(),
+  interest: z.string().nullable().optional(),
+  behavioral_trait: z.string().nullable().optional(),
+  general_note: z.string().nullable().optional(),
+  confidence: z.number().default(1.0)
+});
+
 export const ExtractionResultSchema = z.object({
   intent: IntentTypeSchema.default("UNKNOWN"),
   intentConfidence: z.number().default(0.5),
@@ -101,8 +110,9 @@ export const ExtractionResultSchema = z.object({
   action: z.enum(["SEARCH", "SHOW_MORE", "RECALL_PREVIOUS_RESULTS", "UNKNOWN"]).default("SEARCH"),
   search_sufficiency_score: z.number().default(0.5),
   recommendation_mode: z.enum(["FAST", "PRECISION"]).default("FAST"),
-  preference_corrections: z.array(PreferenceCorrectionSchema).default([]),
+  preference_corrections: z.array(PreferenceCorrectionSchema).nullish().transform(v => v || []),
   price_refinement: PriceRefinementSchema.nullable().optional(),
+  extracted_memory: ExtractedMemorySchema.nullable().optional(),
   missingInfo: MissingInfoSchema
 });
 
@@ -129,6 +139,7 @@ export function getSafeExtractionFallback(message: string): z.infer<typeof Extra
     search_sufficiency_score: 0.0,
     recommendation_mode: "FAST",
     preference_corrections: [],
+    extracted_memory: null,
     missingInfo: {
       isMissingCriticalInfo: false,
       missingFields: []

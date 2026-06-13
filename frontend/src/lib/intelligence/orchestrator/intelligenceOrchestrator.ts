@@ -48,6 +48,7 @@ export class IntelligenceOrchestrator {
         mapped_category: extraction.mapped_category,
         preference_corrections: extraction.preference_corrections,
         price_refinement: extraction.price_refinement,
+        extracted_memory: extraction.extracted_memory,
         traces: this.tracer.getTraces()
       };
     }
@@ -88,6 +89,7 @@ export class IntelligenceOrchestrator {
       mapped_category: extraction.mapped_category,
       preference_corrections: extraction.preference_corrections,
       price_refinement: extraction.price_refinement,
+      extracted_memory: extraction.extracted_memory,
       relationship,
       plan,
       traces: this.tracer.getTraces()

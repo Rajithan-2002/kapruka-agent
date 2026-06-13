@@ -30,7 +30,7 @@ export class MemoryPresentationLayer {
         
         let readableText = "";
         if (category === "preference") {
-            readableText = `${mem.key === "user" ? "User" : mem.key} likes ${mem.value}`;
+            readableText = mem.value;
         } else if (category === "budget") {
             readableText = `Usually shops around ${mem.value}`;
         } else if (category === "relationship") {

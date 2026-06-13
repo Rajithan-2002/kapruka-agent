@@ -38,34 +38,6 @@ export async function POST(request: Request) {
         const body = await request.json();
         const { action } = body;
 
-        if (action === "preload") {
-            // Add Nethmi (Girlfriend)
-            const nethmi = await addRelationship(userId, {
-                relationship_type: "girlfriend",
-                nickname: "Nethmi",
-                birthday: "12 October",
-                notes: "Likes Pink, chocolate, and flowers"
-            });
-            await addPreference(userId, nethmi.id, "Pink");
-            await addPreference(userId, nethmi.id, "Chocolate");
-            await addPreference(userId, nethmi.id, "Flowers");
-
-            // Add Dad
-            const dad = await addRelationship(userId, {
-                relationship_type: "father",
-                nickname: "Dad",
-                birthday: "15 June",
-                notes: "Likes books and technology"
-            });
-            await addPreference(userId, dad.id, "Books");
-            await addPreference(userId, dad.id, "Technology");
-
-            // Fetch final list
-            const relationships = await getRelationships(userId);
-            const preferences = await getPreferences(userId);
-
-            return NextResponse.json({ success: true, relationships, preferences });
-        }
 
         if (action === "add_preference") {
             const { relationshipId, interest } = body;

@@ -21,9 +21,15 @@ export class JudgeAdapter {
             let description = "Processed successfully.";
 
             if (trace.engine === "UNDERSTANDING") {
-                title = "Intent Understood";
-                description = `User wants to ${trace.output?.intent}.`;
-                confidences.intent = trace.output?.confidence || 0.95; // Mock for now
+                const subEngine = trace.output?.original_engine;
+                if (subEngine && subEngine !== "runIntelligenceExtraction" && subEngine !== "IntelligenceExtraction") {
+                    title = subEngine.replace(/Engine|Detector|Selector|Planner/g, "").replace(/([A-Z])/g, ' $1').trim() + " Executed";
+                    description = trace.output?.reasoning || "Sub-engine completed execution.";
+                } else {
+                    title = "Intent Understood";
+                    description = `User wants to ${trace.output?.intent || "shop"}.`;
+                    confidences.intent = trace.output?.confidence || 0.95;
+                }
             } else if (trace.engine === "MEMORY") {
                 title = "Memory Retrieved";
                 description = `Loaded ${trace.output?.loadedCount} memories, selected ${trace.output?.selectedCount}.`;

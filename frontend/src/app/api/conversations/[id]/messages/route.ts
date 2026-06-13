@@ -24,6 +24,8 @@ export async function GET(
             let isAllRequested: boolean | undefined = undefined;
             let initialVisibleCount: number | undefined = undefined;
 
+            let activeMemories: string[] = [];
+
             if (m.metadata) {
                 if (m.metadata.products_list) {
                     products = m.metadata.products_list as any[];
@@ -36,6 +38,9 @@ export async function GET(
                 }
                 if (m.metadata.intelligenceTrace) {
                     intelligenceTrace = m.metadata.intelligenceTrace;
+                }
+                if (m.metadata.activeMemories) {
+                    activeMemories = m.metadata.activeMemories as string[];
                 }
                 if (m.metadata.isAllRequested !== undefined && m.metadata.isAllRequested !== null) {
                     isAllRequested = m.metadata.isAllRequested as boolean;
@@ -53,6 +58,8 @@ export async function GET(
                 tracking: tracking || undefined,
                 traceReport: traceReport || undefined,
                 intelligenceTrace: intelligenceTrace || undefined,
+                judgeModeTrace: intelligenceTrace || undefined,
+                activeMemories,
                 isAllRequested,
                 initialVisibleCount
             };

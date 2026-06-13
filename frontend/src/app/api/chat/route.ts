@@ -194,7 +194,12 @@ export async function POST(request: Request) {
             : "";
 
         // Ensure conversation exists in DB
-        await createConversation(userId, activeSessionId);
+        let initialTitle = message.trim();
+        if (initialTitle.length > 25) {
+            initialTitle = initialTitle.substring(0, 25) + "...";
+        }
+        if (!initialTitle) initialTitle = "Shopping Chat";
+        await createConversation(userId, activeSessionId, initialTitle);
 
         // Save the user's message to persistent chat history
         await saveChatMessage(userId, activeSessionId, "user", message, { intent: "pending" });
@@ -219,7 +224,7 @@ export async function POST(request: Request) {
                     "UNDERSTANDING",
                     t.latencyMs || 0,
                     t.inputs || { message },
-                    { reasoning: t.reasoning, confidence: t.confidence },
+                    { reasoning: t.reasoning, confidence: t.confidence, original_engine: t.engine, intent: intelligence.intent },
                     "HEALTHY"
                 );
                 sessionTraces.push(loggedTrace);
@@ -236,6 +241,10 @@ export async function POST(request: Request) {
             extracted_product_type: { type: message, confidence: 1.0 }, // Fallback to raw message for search
             extracted_recipient: { type: intelligence.situation?.recipient !== "UNKNOWN" ? intelligence.situation?.recipient : null, confidence: 1.0 },
             extracted_occasion: { type: intelligence.situation?.occasion !== "UNKNOWN" ? intelligence.situation?.occasion : null, confidence: 1.0 },
+            get recipient() { return this.extracted_recipient; },
+            set recipient(val) { this.extracted_recipient = val; },
+            get occasion() { return this.extracted_occasion; },
+            set occasion(val) { this.extracted_occasion = val; },
             budget: intelligence.situation?.budget?.max ? { target: intelligence.situation.budget.max } : null,
             needs_history: false,
             emotion: intelligence.psychology?.primaryTrigger || "neutral",
@@ -398,57 +407,61 @@ export async function POST(request: Request) {
         let snapshot = await SessionSnapshotEngine.loadSnapshot(activeSessionId);
         
         // Phase 2: Merge previous turn variables when continuation is triggered
-        if (snapshot) {
-            const isContinuation = ["PRICE_REFINEMENT", "PREFERENCE_CORRECTION", "SHOPPING", "GIFTING"].includes(understandingPlan.intent) &&
-                (understandingPlan.intelligenceData?.action === "SHOW_MORE" || 
-                 understandingPlan.intelligenceData?.action === "RECALL_PREVIOUS_RESULTS" || 
-                 message.toLowerCase().includes("show more") || 
-                 message.toLowerCase().includes("cheaper") || 
-                 message.toLowerCase().includes("next") || 
-                 message.toLowerCase().includes("compare") || 
-                 message.toLowerCase().includes("add card") || 
-                 message.toLowerCase().includes("add item"));
+        const isContinuation = snapshot ? (
+            understandingPlan.intent === "PRICE_REFINEMENT" ||
+            understandingPlan.intent === "PREFERENCE_CORRECTION" ||
+            (["SHOPPING", "GIFTING", "REORDER", "BROWSING", "EXPLORATION"].includes(understandingPlan.intent) &&
+             (understandingPlan.intelligenceData?.action === "SHOW_MORE" || 
+              understandingPlan.intelligenceData?.action === "RECALL_PREVIOUS_RESULTS" || 
+              message.toLowerCase().includes("show more") || 
+              message.toLowerCase().includes("cheaper") || 
+              message.toLowerCase().includes("next") || 
+              message.toLowerCase().includes("compare") || 
+              message.toLowerCase().includes("add card") || 
+              message.toLowerCase().includes("add item") ||
+              message.toLowerCase().includes("filter") ||
+              message.toLowerCase().includes("sort")))
+        ) : false;
 
-            if (isContinuation) {
-                console.log("[Context Retention] Continuation detected. Merging previous parameters from snapshot:", {
-                    recipient: snapshot.recipient,
-                    occasion: snapshot.occasion,
-                    budget: snapshot.budget,
-                    query: snapshot.searchSession?.query
-                });
+        if (snapshot && isContinuation) {
+            console.log("[Context Retention] Continuation detected. Merging previous parameters from snapshot:", {
+                recipient: snapshot.recipient,
+                occasion: snapshot.occasion,
+                budget: snapshot.budget,
+                query: snapshot.searchSession?.query
+            });
 
-                if ((!understandingPlan.product_type || understandingPlan.product_type === "UNKNOWN") && snapshot.searchSession?.query) {
-                    understandingPlan.product_type = snapshot.searchSession.query;
-                    understandingPlan.extracted_product_type = { type: snapshot.searchSession.query, confidence: 1.0 };
-                    if (understandingPlan.intelligenceData) {
-                        understandingPlan.intelligenceData.product_type = snapshot.searchSession.query;
-                    }
-                }
-                if ((!understandingPlan.extracted_recipient?.type || understandingPlan.extracted_recipient.type === "UNKNOWN" || understandingPlan.extracted_recipient.type === null) && snapshot.recipient) {
-                    understandingPlan.extracted_recipient = { type: snapshot.recipient, confidence: 1.0 };
-                    if (understandingPlan.intelligenceData?.situation) {
-                        understandingPlan.intelligenceData.situation.recipient = snapshot.recipient;
-                    }
-                }
-                if ((!understandingPlan.extracted_occasion?.type || understandingPlan.extracted_occasion.type === "UNKNOWN" || understandingPlan.extracted_occasion.type === null) && snapshot.occasion) {
-                    understandingPlan.extracted_occasion = { type: snapshot.occasion, confidence: 1.0 };
-                    if (understandingPlan.intelligenceData?.situation) {
-                        understandingPlan.intelligenceData.situation.occasion = snapshot.occasion;
-                    }
-                }
-                if (!understandingPlan.budget?.target && snapshot.budget) {
-                    understandingPlan.budget = { target: Number(snapshot.budget) };
-                    if (understandingPlan.intelligenceData?.situation?.budget) {
-                        understandingPlan.intelligenceData.situation.budget.max = Number(snapshot.budget);
-                    }
-                }
-                
-                // Keep recommendation ready and bypass missingInfo checks if previous parameters exist
+            if ((!understandingPlan.product_type || understandingPlan.product_type === "UNKNOWN") && snapshot.searchSession?.query) {
+                understandingPlan.product_type = snapshot.searchSession.query;
+                understandingPlan.extracted_product_type = { type: snapshot.searchSession.query, confidence: 1.0 };
                 if (understandingPlan.intelligenceData) {
-                    understandingPlan.intelligenceData.readyForRecommendation = true;
-                    if (understandingPlan.intelligenceData.missingInfo) {
-                        understandingPlan.intelligenceData.missingInfo.isMissingCriticalInfo = false;
-                    }
+                    understandingPlan.intelligenceData.product_type = snapshot.searchSession.query;
+                }
+            }
+            if ((!understandingPlan.extracted_recipient?.type || understandingPlan.extracted_recipient.type === "UNKNOWN" || understandingPlan.extracted_recipient.type === null) && snapshot.recipient) {
+                understandingPlan.extracted_recipient = { type: snapshot.recipient, confidence: 1.0 };
+                if (understandingPlan.intelligenceData?.situation) {
+                    understandingPlan.intelligenceData.situation.recipient = snapshot.recipient;
+                }
+            }
+            if ((!understandingPlan.extracted_occasion?.type || understandingPlan.extracted_occasion.type === "UNKNOWN" || understandingPlan.extracted_occasion.type === null) && snapshot.occasion) {
+                understandingPlan.extracted_occasion = { type: snapshot.occasion, confidence: 1.0 };
+                if (understandingPlan.intelligenceData?.situation) {
+                    understandingPlan.intelligenceData.situation.occasion = snapshot.occasion;
+                }
+            }
+            if (!understandingPlan.budget?.target && snapshot.budget) {
+                understandingPlan.budget = { target: Number(snapshot.budget) };
+                if (understandingPlan.intelligenceData?.situation?.budget) {
+                    understandingPlan.intelligenceData.situation.budget.max = Number(snapshot.budget);
+                }
+            }
+            
+            // Keep recommendation ready and bypass missingInfo checks if previous parameters exist
+            if (understandingPlan.intelligenceData) {
+                understandingPlan.intelligenceData.readyForRecommendation = true;
+                if (understandingPlan.intelligenceData.missingInfo) {
+                    understandingPlan.intelligenceData.missingInfo.isMissingCriticalInfo = false;
                 }
             }
         }
@@ -464,6 +477,9 @@ export async function POST(request: Request) {
 
         const { winner, trace } = engine.evaluate(ruleContext);
         let plan = ActionRouter.mapDecision(winner, understandingPlan.intent);
+        if (snapshot && !isContinuation) {
+            plan.is_context_override = true;
+        }
 
         // ------------------------------------------------------------
         // INTENT + STATE ROUTING GUARDRAIL
@@ -584,28 +600,30 @@ export async function POST(request: Request) {
             stateMachine.transition(journeyEvent);
         }
 
+        const shouldClearParams = plan.is_context_override === true;
+
         // Save new state
         await SessionSnapshotEngine.saveSnapshot(activeSessionId, {
             journeyState: stateMachine.getCurrentState(),
-            recipient: understandingPlan.extracted_recipient?.type || snapshot?.recipient,
-            occasion: understandingPlan.extracted_occasion?.type || snapshot?.occasion,
-            budget: understandingPlan.budget?.target || snapshot?.budget,
+            recipient: understandingPlan.extracted_recipient?.type || (shouldClearParams ? null : snapshot?.recipient),
+            occasion: understandingPlan.extracted_occasion?.type || (shouldClearParams ? null : snapshot?.occasion),
+            budget: understandingPlan.budget?.target || (shouldClearParams ? null : snapshot?.budget),
             activeBundle: snapshot?.activeBundle || [],
             recommendedProducts: snapshot?.recommendedProducts || [],
             searchSession: {
-                query: understandingPlan.product_type || snapshot?.searchSession?.query,
-                recipient: understandingPlan.extracted_recipient?.type || snapshot?.searchSession?.recipient,
-                occasion: understandingPlan.extracted_occasion?.type || snapshot?.searchSession?.occasion,
-                budget: understandingPlan.budget?.target || snapshot?.searchSession?.budget,
-                filters: understandingPlan.intelligenceData?.price_refinement || snapshot?.searchSession?.filters,
+                query: understandingPlan.product_type || (shouldClearParams ? null : snapshot?.searchSession?.query),
+                recipient: understandingPlan.extracted_recipient?.type || (shouldClearParams ? null : snapshot?.searchSession?.recipient),
+                occasion: understandingPlan.extracted_occasion?.type || (shouldClearParams ? null : snapshot?.searchSession?.occasion),
+                budget: understandingPlan.budget?.target || (shouldClearParams ? null : snapshot?.searchSession?.budget),
+                filters: shouldClearParams ? null : (understandingPlan.intelligenceData?.price_refinement || snapshot?.searchSession?.filters),
                 shownProducts: snapshot?.searchSession?.shownProducts || []
             },
             bundleSession: {
                 items: snapshot?.activeBundle || [],
                 total: snapshot?.activeBundle?.reduce((acc: number, item: any) => acc + (item.price || 0), 0) || 0,
-                recipient: understandingPlan.extracted_recipient?.type || snapshot?.bundleSession?.recipient,
-                occasion: understandingPlan.extracted_occasion?.type || snapshot?.bundleSession?.occasion,
-                budget: understandingPlan.budget?.target || snapshot?.bundleSession?.budget
+                recipient: understandingPlan.extracted_recipient?.type || (shouldClearParams ? null : snapshot?.bundleSession?.recipient),
+                occasion: understandingPlan.extracted_occasion?.type || (shouldClearParams ? null : snapshot?.bundleSession?.occasion),
+                budget: understandingPlan.budget?.target || (shouldClearParams ? null : snapshot?.bundleSession?.budget)
             }
         });
 
@@ -695,8 +713,8 @@ export async function POST(request: Request) {
                 toolResults = { status: "failed", error: "Could not find that product in your past orders." };
             }
         } else if (plan.mcp_tool_needed === "show_more" || (plan.mcp_tool_needed === "kapruka_search_products" && plan.mcp_search_query)) {
-            const recipientVal = understandingPlan.recipient?.type || "mother";
-            const occasionVal = understandingPlan.occasion?.type || "birthday";
+            const recipientVal = understandingPlan.recipient?.type || "unknown";
+            const occasionVal = understandingPlan.occasion?.type || "unknown";
             const mode = plan.recommendation_mode || "recommendation";
             let finalRankedList: any[] = [];
             let cacheRemaining = 0;
@@ -927,8 +945,8 @@ export async function POST(request: Request) {
                 const purchaseCategories = purchases.map((p: any) => p.product_category);
 
                 const scoringContext = {
-                    situation: understandingPlan.occasion?.type || "birthday",
-                    recipient: understandingPlan.recipient?.type || "mother",
+                    situation: understandingPlan.occasion?.type || "unknown",
+                    recipient: understandingPlan.recipient?.type || "unknown",
                     recipientPreferences: recipientPrefs,
                     targetBudget: understandingPlan.budget?.target || 0,
                     userIntent: plan.shopping_stage || plan.mcp_search_query || "",
@@ -1023,10 +1041,10 @@ export async function POST(request: Request) {
                         } else if (c.budgetScore >= 0.5 && rankingContext.targetBudget) {
                             explanations.push("Budget friendly option");
                         }
-                        if (c.recipientScore >= 0.7 && rankingContext.recipient) {
+                        if (c.recipientScore >= 0.7 && rankingContext.recipient && rankingContext.recipient !== "unknown") {
                             explanations.push(`Great gift for ${rankingContext.recipient}`);
                         }
-                        if (c.situationScore >= 0.7 && rankingContext.situation) {
+                        if (c.situationScore >= 0.7 && rankingContext.situation && rankingContext.situation !== "unknown") {
                             explanations.push(`Perfect for ${rankingContext.situation}`);
                         }
                         if (c.memoryBoostScore > 0) {
@@ -1325,7 +1343,12 @@ export async function POST(request: Request) {
                 // For now, if the list is dangerously small in Discovery mode, we skip diversity limits below to ensure maximum visibility.
             }
 
-            const availableProducts = finalRankedList.filter((p: any) => !displayedIdsSet.has(p.id));
+            // If the user explicitly requested a refinement (e.g. cheaper, premium, exclusion), 
+            // we should NOT deduplicate against displayed items, because we are re-presenting the pool in a new way.
+            const availableProducts = (refinementType === "more") 
+                ? finalRankedList.filter((p: any) => !displayedIdsSet.has(p.id))
+                : finalRankedList;
+                
             productsList = [];
             const recentCategories: string[] = [];
 
@@ -1418,6 +1441,9 @@ export async function POST(request: Request) {
                 transparencyMessage = `I couldn't find any products in that exact budget within the current recommendations. However, here are the closest alternatives starting at Rs. ${targetPriceFallbackOptions[0].price}. Would you like me to expand the search?`;
                 followUpSuggestions = ["Expand the search", "Increase the budget", "Explore different categories"];
             } else if (poolExhausted) {
+                // If they ask for more but we have no new items, re-display the top items so the UI doesn't crash 
+                // and the LLM doesn't think the tool failed.
+                productsList = finalRankedList.slice(0, 3);
                 transparencyMessage = `You've seen all ${finalRankedList.length} matching products.`;
                 followUpSuggestions = ["Search different categories", "Show cheaper alternatives", "Show premium options"];
             } else if (priceFilteredCount > 0) {
@@ -1525,16 +1551,16 @@ export async function POST(request: Request) {
                 progress?: Array<{ step: string; timestamp: string }>;
                 recipient?: { name: string; phone: string; address: string; city: string };
                 amount?: { value: string; currency: string } | string;
-            } | null;
-            if (rawTrack) {
+            } | { error?: string } | null;
+            if (rawTrack && !('error' in rawTrack) && (rawTrack as any).status) {
                 trackingData = {
                     orderNumber: plan.mcp_search_query,
-                    statusText: rawTrack.status_display || rawTrack.status || "In Transit",
-                    estimatedArrival: rawTrack.delivery_date || "TBD",
-                    recipientName: rawTrack.recipient?.name || "",
-                    recipientCity: rawTrack.recipient?.city || "",
-                    grandTotal: typeof rawTrack.amount === "object" ? `${rawTrack.amount.currency} ${rawTrack.amount.value}` : `${rawTrack.amount || ""}`,
-                    steps: (rawTrack.progress || []).map((step: { step: string; timestamp: string }) => ({
+                    statusText: (rawTrack as any).status_display || (rawTrack as any).status || "In Transit",
+                    estimatedArrival: (rawTrack as any).delivery_date || "TBD",
+                    recipientName: (rawTrack as any).recipient?.name || "",
+                    recipientCity: (rawTrack as any).recipient?.city || "",
+                    grandTotal: typeof (rawTrack as any).amount === "object" ? `${(rawTrack as any).amount.currency} ${(rawTrack as any).amount.value}` : `${(rawTrack as any).amount || ""}`,
+                    steps: ((rawTrack as any).progress || []).map((step: { step: string; timestamp: string }) => ({
                         name: step.step,
                         status: "done",
                         time: step.timestamp
@@ -1702,12 +1728,13 @@ ${chatHistoryContext}
 Based on the Master System Prompt rules and the above context, generate Kapri's response.
 1. ALWAYS prioritize matching the EMOTIONAL state detected: ${understandingPlan.emotion || "neutral"}.
 2. Check the "WHERE ARE WE IN THE JOURNEY?" rule (Section 1.6) and take ONLY ONE action.
-3. If products are shown, designate ONE as Kapri's Pick with a human reason.
+3. If products are shown, you MUST designate the FIRST product in the list (index 0 in the Tool Results data) as Kapri's Pick (Kappy's Pick) in your text and provide a warm human reason for it. Do not choose any other product as your pick/suggestion.
 4. DO NOT list products, prices, or images in your text. The UI automatically renders them below your message. Just refer to them naturally.
 5. EXPLICIT TOOL STATUS RULES:
    - If Tool Results status is "failed", DO NOT say "Let me check" or "Hang tight". Acknowledge the failure honestly ("I couldn't retrieve that information right now. Want me to try again?").
    - If Tool Results status is "cancelled", acknowledge the cancellation naturally ("No problem at all! What else can I help with?").
-${understandingPlan.intent === "GREETING" ? `6. GREETING MODE RULES:
+6. If the active Recipient is "None specified" or "General", or if no specific recipient is determined, you MUST NOT assume, mention, or suggest any specific relationship or recipient (e.g., "mom", "mother", "girlfriend", "dad") in your text response. Keep references generic (e.g., "someone special" or "your recipient").
+${understandingPlan.intent === "GREETING" ? `7. GREETING MODE RULES:
    - The user just greeted you. Keep it warm, casual, and friendly.
    - Greet the user by their name: "${userName}" if it is not "friend". Otherwise, use a friendly Sri Lankan term ("machan", "macha", "buddy") or language-appropriate greeting.
    - DO NOT list or suggest any products.
@@ -1716,13 +1743,13 @@ ${understandingPlan.intent === "GREETING" ? `6. GREETING MODE RULES:
      - English: e.g., "Hey [Name]! Whats up? What are we gonna search for today?"
      - Sinhala/Singlish: e.g., "Kohomada [Name]? Ada mokakda search karanna one?"
      - Tamil/Tanglish: e.g., "Enna [Name], eppadi irukkinga? Inniku enna search panna porom?"
-` : (understandingPlan.intent === "EXPLORATION" ? `6. EXPLORATION MODE RULES:
+` : (understandingPlan.intent === "EXPLORATION" ? `7. EXPLORATION MODE RULES:
    - The user doesn't know what they want. You have pulled some products to inspire them. Present them casually, not as definitive recommendations (e.g., 'Let me show you some things people love' or 'Here are some ideas to get you started').
    - Naturally ask the refinement/lead question below to narrow down their intent.
 ` : "")}
-${understandingPlan.intent !== "GREETING" && understandingPlan.intelligenceData?.nextQuestion && understandingPlan.intelligenceData.nextQuestion !== "None" ? `7. PROGRESSIVE REFINEMENT RULE:
+${understandingPlan.intent !== "GREETING" && understandingPlan.intelligenceData?.nextQuestion && understandingPlan.intelligenceData.nextQuestion !== "None" ? `8. PROGRESSIVE REFINEMENT RULE:
    - You MUST ask the following refinement question at the very end of your response after naturally introducing the products.
-   - Refinement Question: "${understandingPlan.intelligenceData.nextQuestion}"` : (understandingPlan.intent === "GREETING" ? "" : `7. DO NOT ask any follow-up questions or clarification questions. Just introduce the products naturally.`)}
+   - Refinement Question: "${understandingPlan.intelligenceData.nextQuestion}"` : (understandingPlan.intent === "GREETING" ? "" : `8. DO NOT ask any follow-up questions or clarification questions. Just introduce the products naturally.`)}
 `;
 
         // Retrieve active context tags from database for fallback
@@ -1731,17 +1758,24 @@ ${understandingPlan.intent !== "GREETING" && understandingPlan.intelligenceData?
 
         // Calculate dynamic active context tags based on CURRENT understanding
         const dynamicContextTags: string[] = [];
-        if (understandingPlan.extracted_recipient?.type) {
-            dynamicContextTags.push(`Recipient: ${understandingPlan.extracted_recipient.type}`);
+        const finalRecipient = understandingPlan.extracted_recipient?.type || snapshot?.recipient;
+        if (finalRecipient) {
+            dynamicContextTags.push(`Recipient: ${finalRecipient}`);
         }
-        if (understandingPlan.extracted_occasion?.type) {
-            dynamicContextTags.push(`Occasion: ${understandingPlan.extracted_occasion.type}`);
+        
+        const finalOccasion = understandingPlan.extracted_occasion?.type || snapshot?.occasion;
+        if (finalOccasion) {
+            dynamicContextTags.push(`Occasion: ${finalOccasion}`);
         }
-        if (understandingPlan.extracted_product_type?.type) {
-            dynamicContextTags.push(`Looking for: ${understandingPlan.extracted_product_type.type}`);
+        
+        const finalProductType = understandingPlan.extracted_product_type?.type || snapshot?.searchSession?.query;
+        if (finalProductType) {
+            dynamicContextTags.push(`Looking for: ${finalProductType}`);
         }
-        if (understandingPlan.budget?.target) {
-            dynamicContextTags.push(`Budget: ~Rs. ${understandingPlan.budget.target}`);
+        
+        const finalBudget = understandingPlan.budget?.target || snapshot?.budget;
+        if (finalBudget) {
+            dynamicContextTags.push(`Budget: ~Rs. ${finalBudget}`);
         }
 
         // Removed fallback to persistent memory if no active context is specified to prevent UI context bleed
@@ -1757,7 +1791,7 @@ ${understandingPlan.intent !== "GREETING" && understandingPlan.intelligenceData?
 
             const data = new StreamData();
             data.append({
-                activeMemories: activeContextTags,
+                activeMemories: [...dynamicContextTags, ...activeContextTags],
                 traceReport: null,
                 intelligenceTrace: intelligence?.traces || null,
                 judgeModeTrace: judgePayload
@@ -1768,7 +1802,7 @@ ${understandingPlan.intent !== "GREETING" && understandingPlan.intelligenceData?
             return new NextResponse(JSON.stringify({
                 role: "assistant",
                 content: msg,
-                activeMemories: activeContextTags,
+                activeMemories: [...dynamicContextTags, ...activeContextTags],
                 traceReport: null,
                 intelligenceTrace: intelligence?.traces || null,
                 judgeModeTrace: judgePayload,
@@ -1785,7 +1819,7 @@ ${understandingPlan.intent !== "GREETING" && understandingPlan.intelligenceData?
         // 7. STREAM FINAL RESPONSE TO FRONTEND
         const data = new StreamData();
         const dataPayload: any = {
-            activeMemories: activeContextTags,
+            activeMemories: [...dynamicContextTags, ...activeContextTags],
             traceReport: traceReport || null,
             intelligenceTrace: intelligence?.traces || null,
             judgeModeTrace: judgePayload,
@@ -1836,31 +1870,32 @@ ${understandingPlan.intent !== "GREETING" && understandingPlan.intelligenceData?
                     giftMessages: giftMessageOptions,
                     traceId: traceReport?.trace_id,
                     traceReport: traceReport || null,
-                    intelligenceTrace: judgePayload || null
+                    intelligenceTrace: judgePayload || null,
+                    activeMemories: [...dynamicContextTags, ...activeContextTags]
                 });
 
                 // Save updated session snapshot with products, searchSession and bundleSession
                 await SessionSnapshotEngine.saveSnapshot(activeSessionId, {
                     journeyState: stateMachine.getCurrentState(),
-                    recipient: understandingPlan.extracted_recipient?.type || snapshot?.recipient,
-                    occasion: understandingPlan.extracted_occasion?.type || snapshot?.occasion,
-                    budget: understandingPlan.budget?.target || snapshot?.budget,
+                    recipient: understandingPlan.extracted_recipient?.type || (shouldClearParams ? null : snapshot?.recipient),
+                    occasion: understandingPlan.extracted_occasion?.type || (shouldClearParams ? null : snapshot?.occasion),
+                    budget: understandingPlan.budget?.target || (shouldClearParams ? null : snapshot?.budget),
                     activeBundle: snapshot?.activeBundle || [],
                     recommendedProducts: productsList || [],
                     searchSession: {
-                        query: understandingPlan.product_type || snapshot?.searchSession?.query,
-                        recipient: understandingPlan.extracted_recipient?.type || snapshot?.searchSession?.recipient,
-                        occasion: understandingPlan.extracted_occasion?.type || snapshot?.searchSession?.occasion,
-                        budget: understandingPlan.budget?.target || snapshot?.searchSession?.budget,
-                        filters: understandingPlan.intelligenceData?.price_refinement || snapshot?.searchSession?.filters,
+                        query: understandingPlan.product_type || (shouldClearParams ? null : snapshot?.searchSession?.query),
+                        recipient: understandingPlan.extracted_recipient?.type || (shouldClearParams ? null : snapshot?.searchSession?.recipient),
+                        occasion: understandingPlan.extracted_occasion?.type || (shouldClearParams ? null : snapshot?.searchSession?.occasion),
+                        budget: understandingPlan.budget?.target || (shouldClearParams ? null : snapshot?.searchSession?.budget),
+                        filters: shouldClearParams ? null : (understandingPlan.intelligenceData?.price_refinement || snapshot?.searchSession?.filters),
                         shownProducts: productsList || []
                     },
                     bundleSession: {
                         items: snapshot?.activeBundle || [],
                         total: snapshot?.activeBundle?.reduce((acc: number, item: any) => acc + (item.price || 0), 0) || 0,
-                        recipient: understandingPlan.extracted_recipient?.type || snapshot?.bundleSession?.recipient,
-                        occasion: understandingPlan.extracted_occasion?.type || snapshot?.bundleSession?.occasion,
-                        budget: understandingPlan.budget?.target || snapshot?.bundleSession?.budget
+                        recipient: understandingPlan.extracted_recipient?.type || (shouldClearParams ? null : snapshot?.bundleSession?.recipient),
+                        occasion: understandingPlan.extracted_occasion?.type || (shouldClearParams ? null : snapshot?.bundleSession?.occasion),
+                        budget: understandingPlan.budget?.target || (shouldClearParams ? null : snapshot?.bundleSession?.budget)
                     }
                 });
 

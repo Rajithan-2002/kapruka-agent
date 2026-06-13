@@ -6,6 +6,13 @@ export class TraceStore {
     private static store = new Map<string, { traceId: string; traces: EngineTrace<any, any>[] }>();
 
     public static async saveTrace(traceId: string, trace: EngineTrace<any, any>) {
+        // Memory Leak Protection: Cap fallback trace cache to 200 traces using FIFO eviction
+        if (this.store.size >= 200 && !this.store.has(traceId)) {
+            const oldestTraceId = this.store.keys().next().value;
+            if (oldestTraceId) {
+                this.store.delete(oldestTraceId);
+            }
+        }
         const existing = this.store.get(traceId) || { traceId, traces: [] };
         existing.traces.push(trace);
         this.store.set(traceId, existing);

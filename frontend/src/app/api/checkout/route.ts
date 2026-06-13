@@ -7,6 +7,27 @@ export async function POST(request: Request) {
         const payload = await request.json();
         console.log("[Checkout API] Received checkout payload:", JSON.stringify(payload, null, 2));
 
+        // Intercept mock products for seamless UI demo
+        const hasMockIds = payload.cart?.some((item: any) => 
+            ['roses', 'chocs', 'card'].includes(item.product_id) || 
+            item.product_id.startsWith('mock-') ||
+            item.product_id.startsWith('landing-')
+        );
+
+        if (hasMockIds) {
+            console.log("[Checkout API] Mock products detected. Returning mock checkout URL.");
+            return NextResponse.json({
+                success: true,
+                checkout_url: "https://www.kapruka.com/checkout/demo-payment-link",
+                order_ref: `DEMO-${Math.floor(Math.random() * 100000)}`,
+                summary: {
+                    items_total: 4500,
+                    delivery_fee: 300,
+                    grand_total: 4800
+                }
+            });
+        }
+
         // Create order via MCP
         const result = await mcpCreateOrder(payload);
         if (!result || !result.checkout_url) {
