@@ -79,13 +79,27 @@ export async function mcpSearchProducts(query: string, limit = 40, inStockOnly =
             content?: Array<{ text?: string }>;
         };
         if (res.structuredContent?.result) {
-            const parsed = JSON.parse(res.structuredContent.result);
-            return (parsed.results || []) as MCPProduct[];
+            try {
+                const parsed = JSON.parse(res.structuredContent.result);
+                return (parsed.results || []) as MCPProduct[];
+            } catch (e) {
+                if (res.structuredContent.result.toLowerCase().includes("no product")) {
+                    return [];
+                }
+                throw e;
+            }
         }
 
         if (res.content && res.content[0]?.text) {
-            const parsed = JSON.parse(res.content[0].text);
-            return (parsed.results || []) as MCPProduct[];
+            try {
+                const parsed = JSON.parse(res.content[0].text);
+                return (parsed.results || []) as MCPProduct[];
+            } catch (e) {
+                if (res.content[0].text.toLowerCase().includes("no product")) {
+                    return [];
+                }
+                throw e;
+            }
         }
 
         return [];

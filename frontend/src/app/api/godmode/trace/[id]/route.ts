@@ -19,7 +19,8 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         if (tab === "funnel") {
             selectColumns = "trace_id, product_lifecycles";
         } else if (tab === "memory") {
-            selectColumns = "trace_id, learning_profile, confidence_explanation";
+            selectColumns = "trace_id, learning_profile, confidence_explanation, telemetry_events";
+
         } else if (tab === "replay") {
             selectColumns = "trace_id, replay_steps, telemetry_events";
         } else if (tab === "decisions") {

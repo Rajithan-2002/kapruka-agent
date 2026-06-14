@@ -57,8 +57,29 @@ export class EvidenceBuilder {
 
         this.evidenceStore.set(signal.userId, userEvidenceList);
 
-        // TODO: UPSERT into `user_evidence` Supabase table
+        // Persist to Supabase user_evidence table
+        try {
+            const { supabase, useCloud } = await import("../../db");
+            if (useCloud && supabase) {
+                await supabase.from("user_evidence").upsert({
+                    user_id: evidence.userId,
+                    recipient: evidence.recipient || null,
+                    entity_type: evidence.entityType,
+                    entity_id: evidence.entityId,
+                    positive_signals: evidence.positiveSignals,
+                    negative_signals: evidence.negativeSignals,
+                    purchase_count: evidence.purchaseCount,
+                    confidence: evidence.confidence,
+                    last_promotion: evidence.lastPromotion?.toISOString() || null,
+                    updated_at: new Date().toISOString()
+                }, { onConflict: "user_id,recipient,entity_type,entity_id" });
+            }
+        } catch (err) {
+            console.warn("[EvidenceBuilder] Supabase upsert failed, evidence in-memory only:", err);
+        }
+
         return evidence;
+
     }
 
     private static calculateConfidence(evidence: UserEvidence): number {

@@ -70,7 +70,7 @@ const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY;
 
 export const useCloud = !!(supabaseUrl && supabaseServiceKey);
 export const supabase = useCloud ? createClient(supabaseUrl!, supabaseServiceKey!) : null;
-export const FALLBACK_USER_ID = "22222222-2222-2222-2222-222222222222";
+export const FALLBACK_USER_ID = "00000000-0000-0000-0000-000000000000";
 
 if (useCloud) {
     console.log("Kappy Cloud Database initialized using Supabase.");

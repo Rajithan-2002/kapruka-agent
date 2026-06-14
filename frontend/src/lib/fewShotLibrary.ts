@@ -1,3 +1,6 @@
+import OpenAI from "openai";
+import { godModeStorage } from "@/lib/intelligence/observability/godmode/storage";
+
 export interface FewShotExample {
     intent: string;
     language: string;
@@ -410,71 +413,227 @@ export async function fetchFewShotsCached(): Promise<FewShotExample[]> {
     return fewShotsCache;
 }
 
+const fewShotEmbeddingCache = new Map<string, number[]>();
+const MIN_SIMILARITY = 0.70;
+
 export async function selectFewShots(
+    message: string,
     intent: string,
     language: string,
-    emotion: string
+    emotion: string,
+    intentConfidence: number = 1.0,
+    history: any[] = []
 ): Promise<FewShotExample[]> {
-    const currentLibrary = await fetchFewShotsCached();
     const rawLang = (language || "English").toLowerCase();
+    const cleanMsg = message.trim().toLowerCase();
     
-    // Determine language family preference list
-    let preferredLangs: string[] = ["english"];
+    // Gating parameters (Gated API execution check)
+    const wordCount = cleanMsg.split(/\s+/).filter(Boolean).length;
+    const isFirstTurns = history.length <= 6;
+    const isLowConfidence = intentConfidence < 0.7;
+    const isComplexMessage = wordCount > 5;
+    const shouldRunSemantic = isFirstTurns || isLowConfidence || isComplexMessage;
+
+    // Determine allowed languages (Hard Filter for Safeguard 2)
+    let allowedLanguages: string[] = ["English"];
     if (rawLang.includes("tamil") || rawLang.includes("tanglish")) {
-        preferredLangs = ["tamil", "tanglish", "english"];
+        allowedLanguages = ["Tanglish", "Tamil", "English"];
     } else if (rawLang.includes("singlish") || rawLang.includes("sinhala")) {
-        preferredLangs = ["singlish", "sinhala", "english"];
+        allowedLanguages = ["Singlish", "Sinhala", "English"];
     } else {
-        preferredLangs = ["english", "singlish", "tanglish"];
+        allowedLanguages = ["English", "Singlish", "Tanglish"];
     }
 
-    // Attempt to gather matches in preferred order of languages
-    const gathered: FewShotExample[] = [];
-    for (const lang of preferredLangs) {
-        const matches = currentLibrary.filter(
-            e => e.intent === intent && e.language.toLowerCase() === lang
-        );
-        for (const m of matches) {
-            if (!gathered.includes(m)) {
-                gathered.push(m);
+    let semanticData: any[] = [];
+    let isFallback = true;
+    let fallbackReason = "GATING_BYPASS";
+
+    if (shouldRunSemantic) {
+        try {
+            // Get or generate query embedding (Safeguard 5)
+            let queryEmbedding: number[] | null = null;
+            if (fewShotEmbeddingCache.has(cleanMsg)) {
+                queryEmbedding = fewShotEmbeddingCache.get(cleanMsg)!;
+                console.log(`[Few-Shots Embedding Cache] Hit for query: "${cleanMsg}"`);
+            } else {
+                const openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+                const response = await openaiClient.embeddings.create({
+                    model: 'text-embedding-3-small',
+                    input: cleanMsg,
+                });
+                queryEmbedding = response.data[0].embedding;
+                fewShotEmbeddingCache.set(cleanMsg, queryEmbedding);
+                console.log(`[Few-Shots Embedding Cache] Generated vector for: "${cleanMsg}"`);
+            }
+
+            // Call Supabase RPC similarity search (allowed_languages hard filter is applied at query level)
+            const { createClient } = await import("@/lib/supabase/server");
+            const supabase = await createClient();
+            const { data, error } = await supabase.rpc("match_few_shots", {
+                query_embedding: queryEmbedding,
+                allowed_languages: allowedLanguages,
+                match_limit: 5
+            });
+
+            if (error) {
+                throw new Error(error.message);
+            }
+
+            if (data && data.length > 0) {
+                semanticData = data;
+                
+                // Safeguard 1: Confidence Threshold Check
+                const maxSimilarity = Math.max(...semanticData.map((r: any) => r.similarity || 0));
+                if (maxSimilarity >= MIN_SIMILARITY) {
+                    isFallback = false;
+                } else {
+                    fallbackReason = `LOW_SIMILARITY (${maxSimilarity.toFixed(2)})`;
+                }
+            } else {
+                fallbackReason = "NO_RESULTS_RETURNED";
+            }
+        } catch (err: any) {
+            console.warn("[Few-Shots Semantic] Semantic search exception, falling back to category matching:", err.message);
+            fallbackReason = `EXCEPTION: ${err.message}`;
+        }
+    }
+
+    let selected: FewShotExample[] = [];
+
+    if (!isFallback && semanticData.length > 0) {
+        // Hybrid Reranking (Safeguard 2 & 3)
+        const scoredCandidates = semanticData.map((candidate: any) => {
+            const isIntentMatch = candidate.intent === intent ? 1.0 : 0.0;
+            const isLanguageMatch = candidate.language.toLowerCase() === rawLang ? 1.0 : 
+                                    (allowedLanguages.slice(0, 2).map(l => l.toLowerCase()).includes(candidate.language.toLowerCase()) ? 0.8 : 0.0);
+            
+            const score = (candidate.similarity || 0) * 0.6 + isIntentMatch * 0.25 + isLanguageMatch * 0.15;
+            return { ...candidate, score };
+        });
+
+        // Sort by score descending
+        scoredCandidates.sort((a: any, b: any) => b.score - a.score);
+
+        selected = scoredCandidates.slice(0, 2).map((c: any) => ({
+            intent: c.intent,
+            language: c.language,
+            emotion: c.emotion,
+            user: c.user_query,
+            assistant: c.assistant_response
+        }));
+
+        console.log(`[Few-Shots Semantic] Selected ${selected.length} semantic examples using hybrid scoring.`);
+
+        // Log to God Mode trace storage context (Safeguard 3)
+        const store = godModeStorage.getStore();
+        if (store && (store as any).telemetryEvents) {
+            (store as any).telemetryEvents.push({
+                event: "few_shot_retrieval",
+                timestamp: Date.now(),
+                data: {
+                    query: message,
+                    gated: shouldRunSemantic,
+                    fallback: false,
+                    candidates: scoredCandidates.map((c: any) => ({
+                        intent: c.intent,
+                        language: c.language,
+                        similarity: c.similarity,
+                        score: c.score,
+                        user: c.user_query
+                    })),
+                    selected: selected.map((s: any) => ({
+                        intent: s.intent,
+                        language: s.language,
+                        user: s.user
+                    }))
+                }
+            });
+        }
+    } else {
+        // Fallback execution logic: exact category matching (existing logic)
+        const currentLibrary = await fetchFewShotsCached();
+        let preferredLangs: string[] = ["english"];
+        if (rawLang.includes("tamil") || rawLang.includes("tanglish")) {
+            preferredLangs = ["tamil", "tanglish", "english"];
+        } else if (rawLang.includes("singlish") || rawLang.includes("sinhala")) {
+            preferredLangs = ["singlish", "sinhala", "english"];
+        } else {
+            preferredLangs = ["english", "singlish", "tanglish"];
+        }
+
+        const gathered: FewShotExample[] = [];
+        for (const lang of preferredLangs) {
+            const matches = currentLibrary.filter(
+                e => e.intent === intent && e.language.toLowerCase() === lang
+            );
+            for (const m of matches) {
+                if (!gathered.includes(m)) {
+                    gathered.push(m);
+                }
+            }
+            if (gathered.length >= 2) {
+                selected = gathered.slice(0, 2);
+                break;
             }
         }
-        if (gathered.length >= 2) {
-            return gathered.slice(0, 2);
+
+        if (selected.length < 2) {
+            const intentOnlyMatches = currentLibrary.filter(e => e.intent === intent);
+            for (const m of intentOnlyMatches) {
+                if (!gathered.includes(m)) {
+                    gathered.push(m);
+                }
+            }
+            if (gathered.length >= 2) {
+                selected = gathered.slice(0, 2);
+            }
+        }
+
+        if (selected.length < 2) {
+            let defaultGreetings: FewShotExample[] = [];
+            for (const lang of preferredLangs) {
+                const greetingsForLang = currentLibrary.filter(
+                    e => e.intent === "GREETING" && e.language.toLowerCase() === lang
+                );
+                defaultGreetings = defaultGreetings.concat(greetingsForLang);
+            }
+
+            const allGreetings = currentLibrary.filter(e => e.intent === "GREETING");
+            for (const g of allGreetings) {
+                if (!defaultGreetings.includes(g)) {
+                    defaultGreetings.push(g);
+                }
+            }
+
+            if (gathered.length === 1) {
+                selected = [gathered[0], defaultGreetings[0]];
+            } else {
+                selected = defaultGreetings.slice(0, 2);
+            }
+        }
+
+        console.log(`[Few-Shots Fallback] Selected ${selected.length} category-matched examples. Reason: ${fallbackReason}`);
+
+        // Log to God Mode trace storage context (Safeguard 3)
+        const store = godModeStorage.getStore();
+        if (store && (store as any).telemetryEvents) {
+            (store as any).telemetryEvents.push({
+                event: "few_shot_retrieval",
+                timestamp: Date.now(),
+                data: {
+                    query: message,
+                    gated: shouldRunSemantic,
+                    fallback: true,
+                    fallback_reason: fallbackReason,
+                    selected: selected.map((s: any) => ({
+                        intent: s.intent,
+                        language: s.language,
+                        user: s.user
+                    }))
+                }
+            });
         }
     }
 
-    // Attempt 2: match intent only, ignore language (generic fallback)
-    const intentOnlyMatches = currentLibrary.filter(e => e.intent === intent);
-    for (const m of intentOnlyMatches) {
-        if (!gathered.includes(m)) {
-            gathered.push(m);
-        }
-    }
-    if (gathered.length >= 2) {
-        return gathered.slice(0, 2);
-    }
-
-    // Fallback: combine with generic greeting examples based on language family preference
-    let defaultGreetings: FewShotExample[] = [];
-    for (const lang of preferredLangs) {
-        const greetingsForLang = currentLibrary.filter(
-            e => e.intent === "GREETING" && e.language.toLowerCase() === lang
-        );
-        defaultGreetings = defaultGreetings.concat(greetingsForLang);
-    }
-
-    // Fallback to any greeting
-    const allGreetings = currentLibrary.filter(e => e.intent === "GREETING");
-    for (const g of allGreetings) {
-        if (!defaultGreetings.includes(g)) {
-            defaultGreetings.push(g);
-        }
-    }
-
-    if (gathered.length === 1) {
-        return [gathered[0], defaultGreetings[0]];
-    }
-
-    return defaultGreetings.slice(0, 2);
+    return selected;
 }

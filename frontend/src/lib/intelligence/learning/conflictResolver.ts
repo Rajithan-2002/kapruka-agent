@@ -45,6 +45,24 @@ export class LearningConflictResolver {
 
     private static async queueConflict(userId: string, existingMemoryId: string, newEvidenceId: string) {
         console.warn(`[LearningConflictResolver] Conflict detected between Memory ${existingMemoryId} and Evidence ${newEvidenceId}. Queued for review.`);
-        // TODO: Insert into `learning_conflict_queue` Supabase table
+        
+        // Only insert real IDs (not temp placeholders)
+        if (newEvidenceId === "temp") return;
+        
+        try {
+            const { supabase, useCloud } = await import("../../db");
+            if (useCloud && supabase) {
+                await supabase.from("learning_conflict_queue").insert({
+                    user_id: userId,
+                    existing_memory_id: existingMemoryId,
+                    new_evidence_id: newEvidenceId,
+                    status: "PENDING",
+                    created_at: new Date().toISOString()
+                });
+            }
+        } catch (err) {
+            console.warn("[LearningConflictResolver] Failed to queue conflict in Supabase:", err);
+        }
     }
+
 }

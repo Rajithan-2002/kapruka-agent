@@ -57,7 +57,7 @@ interface GodPanelProps {
 }
 
 export default function GodPanel({ traceId, onClose, relationships = [], preferences = [], activeMemories = [] }: GodPanelProps) {
-    const [activeTab, setActiveTab] = useState<"overview" | "funnel" | "memory" | "decisions" | "replay" | "compare">("overview");
+    const [activeTab, setActiveTab] = useState<"overview" | "funnel" | "memory" | "decisions" | "replay" | "compare" | "learning">("overview");
     const [tabData, setTabData] = useState<Record<string, any>>({});
     const [loadingTabs, setLoadingTabs] = useState<Record<string, boolean>>({});
     const [copiedMap, setCopiedMap] = useState<Record<string, boolean>>({});
@@ -424,12 +424,16 @@ export default function GodPanel({ traceId, onClose, relationships = [], prefere
                 </div>
                 
                 {/* Tabs */}
-                <div className="grid grid-cols-6 gap-1 border border-white/5 rounded-lg p-0.5 bg-slate-950/60 shadow-inner">
-                    {(["overview", "funnel", "memory", "decisions", "replay", "compare"] as const).map(tab => (
+                <div className="grid grid-cols-7 gap-1 border border-white/5 rounded-lg p-0.5 bg-slate-950/60 shadow-inner">
+                    {(["overview", "funnel", "memory", "decisions", "replay", "compare", "learning"] as const).map(tab => (
                         <button 
                             key={tab}
                             onClick={() => handleTabChange(tab)}
-                            className={`py-1 text-[10px] font-semibold rounded capitalize transition-all duration-150 ${activeTab === tab ? "bg-cyan-500/20 text-cyan-400 shadow-sm" : "text-slate-400 hover:bg-white/5 hover:text-slate-200"}`}
+                            className={`py-1 text-[10px] font-semibold rounded capitalize transition-all duration-150 ${
+                                tab === "learning" 
+                                    ? activeTab === tab ? "bg-violet-500/20 text-violet-400 shadow-sm" : "text-violet-300/50 hover:bg-white/5 hover:text-violet-300"
+                                    : activeTab === tab ? "bg-cyan-500/20 text-cyan-400 shadow-sm" : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
+                            }`}
                         >
                             {tab}
                         </button>
@@ -978,6 +982,8 @@ export default function GodPanel({ traceId, onClose, relationships = [], prefere
                                 // Extract memories from telemetryEvents where engine === "Memory"
                                 const events = tabData.memory.telemetry_events || [];
                                 const memoryLogs = events.filter((e: any) => e.engine === "Memory");
+                                const usedLogs = memoryLogs.filter((e: any) => e.details?.utilization === "USED");
+                                const ignoredLogs = memoryLogs.filter((e: any) => e.details?.utilization === "IGNORED");
 
                                 if (memoryLogs.length === 0) {
                                     return <div className="text-xs text-slate-500 italic text-center py-4 font-semibold text-slate-400">No memory used in this session.</div>;
@@ -985,17 +991,35 @@ export default function GodPanel({ traceId, onClose, relationships = [], prefere
 
                                 return (
                                     <div className="flex flex-col gap-3">
+                                        {/* Memory Stats Summary Header */}
+                                        <div className="grid grid-cols-3 gap-2 text-center mb-1">
+                                            <div className="bg-slate-950 p-2 rounded border border-white/5">
+                                                <div className="text-[9px] text-slate-500 mb-0.5">Loaded</div>
+                                                <div className="font-bold text-cyan-400 text-sm">{memoryLogs.length}</div>
+                                            </div>
+                                            <div className="bg-slate-950 p-2 rounded border border-emerald-800/20">
+                                                <div className="text-[9px] text-slate-500 mb-0.5">Used</div>
+                                                <div className="font-bold text-emerald-400 text-sm">{usedLogs.length}</div>
+                                            </div>
+                                            <div className="bg-slate-950 p-2 rounded border border-white/5">
+                                                <div className="text-[9px] text-slate-500 mb-0.5">Ignored</div>
+                                                <div className="font-bold text-slate-400 text-sm">{ignoredLogs.length}</div>
+                                            </div>
+                                        </div>
                                         {memoryLogs.map((log: any, idx: number) => {
                                             const m = log.details || {};
                                             const isUsed = m.utilization === "USED";
+                                            const isBlocked = m.utilization === "BLOCKED";
                                             return (
                                                 <div key={idx} className="bg-slate-950 p-3 rounded-lg border border-white/5 flex flex-col gap-2">
                                                     <div className="flex justify-between items-center text-xs">
                                                         <span className="font-semibold text-slate-300 font-mono text-[10px]">Memory Block</span>
                                                         <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${
-                                                            isUsed ? "bg-emerald-500/15 text-emerald-400" : "bg-slate-800 text-slate-400"
+                                                            isUsed ? "bg-emerald-500/15 text-emerald-400" 
+                                                            : isBlocked ? "bg-rose-500/15 text-rose-400"
+                                                            : "bg-slate-800 text-slate-400"
                                                         }`}>
-                                                            {isUsed ? "Loaded & Used" : "Loaded but Ignored"}
+                                                            {isUsed ? "Loaded & Used" : isBlocked ? "BLOCKED" : "Loaded but Ignored"}
                                                         </span>
                                                     </div>
                                                     <div className="text-xs text-slate-200 bg-slate-900 p-2 rounded border border-white/5 leading-relaxed font-sans">
@@ -1008,6 +1032,32 @@ export default function GodPanel({ traceId, onClose, relationships = [], prefere
                                                 </div>
                                             );
                                         })}
+
+                                        {/* Memory Influence Panel */}
+                                        {tabData.memory.memory_influence && (tabData.memory.memory_influence as any[]).length > 0 && (
+                                            <div className="bg-slate-950 border border-violet-800/20 rounded-lg p-3 flex flex-col gap-2 mt-1">
+                                                <div className="text-[10px] font-bold text-violet-400 uppercase tracking-wider border-b border-white/5 pb-1 flex items-center gap-1">
+                                                    <Sparkles className="w-3 h-3" />
+                                                    Memory Influence on Recommendations
+                                                </div>
+                                                {(tabData.memory.memory_influence as any[]).map((inf: any, i: number) => (
+                                                    <div key={i} className="flex flex-col gap-1">
+                                                        <div className={`text-[10px] font-semibold flex items-center gap-1 ${
+                                                            inf.blocked ? "text-rose-400" : "text-emerald-400"
+                                                        }`}>
+                                                            {inf.blocked ? "✗" : "✓"} {inf.memory}
+                                                        </div>
+                                                        {inf.blocked ? (
+                                                            <div className="text-[10px] text-rose-300/70 font-mono pl-3">Product REJECTED due to negative preference</div>
+                                                        ) : (
+                                                            <div className="text-[10px] text-slate-400 font-mono pl-3">
+                                                                Score boost: <span className="text-emerald-400 font-bold">+{inf.scoreDelta}</span>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
                                     </div>
                                 );
                             })()}
@@ -1427,7 +1477,97 @@ export default function GodPanel({ traceId, onClose, relationships = [], prefere
                         )}
                     </div>
                 )}
+                {/* 🧠 LEARNING TAB */}
+                {activeTab === "learning" && (() => {
+                    const lp = tabData.memory?.learning_profile || tabData.learning?.learning_profile || null;
+                    const affinities: any[] = tabData.memory?.user_affinities || tabData.learning?.user_affinities || [];
+
+                    return (
+                        <div className="flex flex-col gap-5 animate-fade-in">
+                            {/* Header */}
+                            <div className="bg-violet-900/20 border border-violet-800/30 rounded-xl p-4 flex items-center gap-3">
+                                <Brain className="w-6 h-6 text-violet-400 flex-shrink-0" />
+                                <div>
+                                    <div className="text-xs font-bold text-violet-400 uppercase tracking-wider">Kappy Learning Engine</div>
+                                    <div className="text-[10px] text-slate-400 mt-0.5">Category affinities built from user interactions and feedback signals</div>
+                                </div>
+                            </div>
+
+                            {/* Affinity Leaderboard */}
+                            <div className="bg-slate-900/50 border border-white/10 rounded-xl p-4 flex flex-col gap-3">
+                                <h3 className="text-xs font-bold text-violet-400 uppercase tracking-wider border-b border-white/5 pb-2 flex items-center gap-1">
+                                    <BarChart3 className="w-3 h-3" />
+                                    Category Affinity Leaderboard
+                                </h3>
+                                {affinities.length === 0 ? (
+                                    <div className="text-center py-6 text-slate-500 text-xs">
+                                        <Heart className="w-8 h-8 mx-auto mb-2 opacity-20 text-violet-400" />
+                                        <div className="font-semibold text-slate-400">No affinity data yet</div>
+                                        <div className="text-[10px] mt-1">Affinities are built from purchases, thumbs-up/down, and product views.</div>
+                                    </div>
+                                ) : (
+                                    <div className="flex flex-col gap-2">
+                                        {[...affinities]
+                                            .sort((a: any, b: any) => Math.abs(b.affinity_score || b.score || 0) - Math.abs(a.affinity_score || a.score || 0))
+                                            .slice(0, 10)
+                                            .map((aff: any, idx: number) => {
+                                                const score = aff.affinity_score ?? aff.score ?? 0;
+                                                const isPositive = score >= 0;
+                                                const barWidth = Math.min(100, Math.abs(score) * 10);
+                                                return (
+                                                    <div key={idx} className="flex flex-col gap-1">
+                                                        <div className="flex justify-between items-center text-[10px]">
+                                                            <span className="text-slate-300 capitalize font-semibold">{aff.target_id || aff.targetId}</span>
+                                                            <span className={`font-bold font-mono ${isPositive ? "text-emerald-400" : "text-rose-400"}`}>
+                                                                {isPositive ? "+" : ""}{score.toFixed(1)}
+                                                            </span>
+                                                        </div>
+                                                        <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                                                            <div 
+                                                                className={`h-full rounded-full transition-all duration-500 ${isPositive ? "bg-emerald-500/70" : "bg-rose-500/70"}`}
+                                                                style={{ width: `${barWidth}%` }}
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Evidence Counts from Learning Profile */}
+                            {lp && (
+                                <div className="bg-slate-900/50 border border-white/10 rounded-xl p-4 flex flex-col gap-3">
+                                    <h3 className="text-xs font-bold text-violet-400 uppercase tracking-wider border-b border-white/5 pb-2">Learning Signal Summary</h3>
+                                    <div className="grid grid-cols-3 gap-2 text-center text-xs font-mono">
+                                        <div className="bg-slate-950 p-2 rounded border border-white/5">
+                                            <div className="text-[9px] text-slate-500 mb-0.5">Searches</div>
+                                            <div className="font-bold text-cyan-400 text-sm">{lp.evidenceCounts?.searches ?? 0}</div>
+                                        </div>
+                                        <div className="bg-slate-950 p-2 rounded border border-emerald-800/20">
+                                            <div className="text-[9px] text-slate-500 mb-0.5">Purchases</div>
+                                            <div className="font-bold text-emerald-400 text-sm">{lp.evidenceCounts?.purchases ?? 0}</div>
+                                        </div>
+                                        <div className="bg-slate-950 p-2 rounded border border-amber-800/20">
+                                            <div className="text-[9px] text-slate-500 mb-0.5">Feedback</div>
+                                            <div className="font-bold text-amber-400 text-sm">{lp.evidenceCounts?.feedback ?? 0}</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {!lp && affinities.length === 0 && (
+                                <div className="bg-slate-900/50 border border-white/10 rounded-xl p-6 text-center text-slate-400">
+                                    <Sparkles className="w-8 h-8 mx-auto mb-3 opacity-20 text-violet-400" />
+                                    <div className="text-xs font-bold text-slate-300 mb-1">Learning Engine Active</div>
+                                    <p className="text-[10px] text-slate-500">Purchase products, use thumbs-up/down, or browse recommendations to build your affinity profile.</p>
+                                </div>
+                            )}
+                        </div>
+                    );
+                })()}
             </div>
+
         </div>
     );
 }

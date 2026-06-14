@@ -97,9 +97,19 @@ export class MemoryRelevanceEngine {
     }
 
     private static calculateContextBoost(mem: MemoryItem, context: ContextType): number {
-        if (context === "GIFT" && "interest" in mem) return 1.0; // Preferences strongly boost gifts
+        // Check for negative preference first — hard penalty regardless of context
+        const isNegative = "interest" in mem
+            ? (mem.interest || "").toLowerCase().startsWith("dislikes:")
+            : (mem.value || "").toLowerCase().includes(" dislikes ");
+        if (isNegative) return -2.0; // Hard penalty: guarantees final score < 0.45 threshold
+
+        // GIFT context: boost both direct preference records AND conversational preference memories
+        if (context === "GIFT" && ("interest" in mem || mem.category === "preference")) return 1.0;
+
+        // REORDER context: boost purchase history memories
         if (context === "REORDER" && !("interest" in mem) && mem.category === "purchase_history") return 1.0;
-        return 0.2; // Baseline
+
+        return 0.2; // Baseline for unrelated memories
     }
 
     private static calculateRecencyScore(mem: MemoryItem): number {

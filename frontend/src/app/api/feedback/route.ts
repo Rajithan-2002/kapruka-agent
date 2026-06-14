@@ -44,6 +44,17 @@ export async function POST(request: Request) {
             null // Budget range is not available in feedback context
         );
 
+        // Wire feedback into the affinity learning engine
+        if (effectiveUserId && context.category) {
+            try {
+                const { AffinityEngine } = await import("@/lib/intelligence/recommendation/affinityEngine");
+                const affinityAction = feedbackType === "RELEVANT" ? "CLICK" : "EXPLICIT_DISLIKE";
+                await AffinityEngine.recordInteraction(effectiveUserId, "category", context.category, affinityAction);
+            } catch (err) {
+                console.warn("[Feedback] AffinityEngine update failed (non-critical):", err);
+            }
+        }
+
         return NextResponse.json({ success: true, contextKey });
     } catch (error: any) {
         console.error("Feedback API Error:", error);

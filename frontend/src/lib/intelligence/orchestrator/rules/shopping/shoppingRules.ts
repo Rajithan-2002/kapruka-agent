@@ -41,8 +41,9 @@ export class ClarificationRule extends BaseRule {
 
     evaluate(context: RuleContext): RuleResult {
         const ue = context.understandingPlan;
+        const isShopping = ["SHOPPING", "GIFTING", "REORDER", "BROWSING", "PRICE_REFINEMENT", "PREFERENCE_CORRECTION", "EXPLORATION", "PRODUCT_REJECTION"].includes(ue.intent || "");
 
-        if (ue.intelligenceData && !ue.intelligenceData.readyForRecommendation) {
+        if (isShopping && ue.intelligenceData && !ue.intelligenceData.readyForRecommendation) {
             
             // Missing Information Prioritizer
             const missing = [];

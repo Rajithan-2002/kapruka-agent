@@ -10,6 +10,7 @@ import { getPurchaseHistory, searchPurchases } from "@/lib/services/purchaseHist
 import { getOrCreateJourney, updateJourneyStages } from "@/lib/services/shoppingJourneyService";
 import { validateProducts, LifecycleLog } from "@/lib/recommendationValidator";
 import { createClient } from "@/lib/supabase/server";
+import { FALLBACK_USER_ID } from "@/lib/db";
 import {
     mcpSearchProducts,
     mcpTrackOrder,
@@ -271,7 +272,7 @@ export async function POST(request: Request) {
     const traceStartTime = Date.now();
 
     const supabase = await createClient();
-    let userId = "00000000-0000-0000-0000-000000000000";
+    let userId = FALLBACK_USER_ID;
     let userName = "friend";
     try {
         const { data: { user } } = await supabase.auth.getUser();
@@ -405,9 +406,10 @@ async function processPostRequest(
         // 2. Apply Decay
         const decayedMemories = resolvedMemories.map(m => MemoryDecayEngine.applyDecay(m));
 
-        // 3. Rank Relevance based on extracted context
-        const contextType = "GENERAL"; // Simple mapping, could be expanded
-        const relevanceResult = MemoryRelevanceEngine.rankMemories(message, decayedMemories, contextType);
+        // 3. Rank Relevance — auto-classify context from message (GIFT / REORDER / TRACKING / etc.)
+        // Combine both conversation memories AND preference records so both are ranked
+        const allMemoryItems = [...decayedMemories, ...rawPreferences];
+        const relevanceResult = MemoryRelevanceEngine.rankMemories(message, allMemoryItems);
 
         // Map relevant memories to Context Tags using Presentation Layer
         let activeContextTags = relevanceResult.relevantMemories.map(m => {
@@ -415,9 +417,9 @@ async function processPostRequest(
             return `${rendered.category}: ${rendered.text}`;
         });
 
-        // Log memory usage for God Mode
+        // Log memory usage for God Mode — cover both memories and preferences
         const { LearningEvidenceService } = await import("@/lib/intelligence/observability/godmode/learningEvidenceService");
-        decayedMemories.forEach(m => {
+        allMemoryItems.forEach(m => {
             const isUsed = relevanceResult.relevantMemories.some(rm => rm.id === m.id);
             const rendered = MemoryPresentationLayer.renderMemory(m);
             const memoryText = rendered.text;
@@ -427,6 +429,7 @@ async function processPostRequest(
                 isUsed ? "Confidence score meets relevance threshold" : "Low semantic alignment with query"
             );
         });
+
 
         const memoryTrace = await TraceCollector.logExecution(
             traceId,
@@ -442,6 +445,13 @@ async function processPostRequest(
             circuitState === "DEGRADED" ? "DEGRADED" : "HEALTHY"
         );
         sessionTraces.push(memoryTrace);
+
+        const { GodTelemetryService } = await import("@/lib/intelligence/observability/godmode/telemetryService");
+        GodTelemetryService.emit("MEMORY", "COMPLETED", {
+            loadedCount: rawMemories.length,
+            selectedCount: relevanceResult.relevantMemories.length,
+            confidence: relevanceResult.relevantMemories.length > 0 ? 0.9 : 0
+        });
 
         // Run through Profile Normalizer Gateway
         const { normalizeUserContext } = await import("@/lib/intelligence/normalization/profileNormalizer");
@@ -493,6 +503,16 @@ async function processPostRequest(
             ? [...history].reverse().find((h: any) => h.role === "assistant")?.content || null
             : null;
         const preIntentResult = PreIntentParser.parse(message, history || [], lastAssistantMessage);
+
+        // Normalize pre-classified intents
+        if (preIntentResult.intent) {
+            const intentUpper = preIntentResult.intent.toUpperCase();
+            if (intentUpper.startsWith("GIFT_") || intentUpper.endsWith("_GIFT") || intentUpper.startsWith("RECIPIENT_")) {
+                preIntentResult.intent = "GIFTING";
+            } else if (intentUpper.endsWith("_SHOPPING") || intentUpper.endsWith("_PURCHASE") || intentUpper.includes("BUDGET")) {
+                preIntentResult.intent = "SHOPPING";
+            }
+        }
 
         // 2. INTELLIGENCE ENGINE (V1)
         let intelligence: any;
@@ -549,12 +569,18 @@ async function processPostRequest(
                 );
                 sessionTraces.push(loggedTrace);
             }
+
+            const { GodTelemetryService } = await import("@/lib/intelligence/observability/godmode/telemetryService");
+            GodTelemetryService.emit("UNDERSTANDING", "COMPLETED", {
+                intent: intelligence.intent,
+                confidence: intelligence.recommendationConfidence || 0.5
+            });
         }
 
         // Create a backward-compatible understandingPlan for legacy route.ts logic
         const understandingPlan: any = {
             intent: intelligence.intent,
-            is_shopping_request: ["SHOPPING", "GIFTING", "REORDER", "BROWSING", "PRICE_REFINEMENT", "PREFERENCE_CORRECTION", "EXPLORATION", "PRODUCT_REJECTION"].includes(intelligence.intent || ""),
+            is_shopping_request: ["SHOPPING", "GIFTING", "REORDER", "BROWSING", "PRICE_REFINEMENT", "PREFERENCE_CORRECTION", "EXPLORATION", "PRODUCT_REJECTION", "CHECKOUT_CONFIRM"].includes(intelligence.intent || ""),
             unsupported_domain: null,
             product_type: intelligence.product_type || "UNKNOWN",
             situation: intelligence.situation,
@@ -674,7 +700,7 @@ async function processPostRequest(
             return cleanMessage === g || cleanMessage.startsWith(g + " ");
         });
 
-        const isShoppingIntent = ["SHOPPING", "GIFTING", "REORDER", "BROWSING", "PRICE_REFINEMENT", "PREFERENCE_CORRECTION", "EXPLORATION", "PRODUCT_REJECTION"].includes(understandingPlan.intent || "");
+        const isShoppingIntent = ["SHOPPING", "GIFTING", "REORDER", "BROWSING", "PRICE_REFINEMENT", "PREFERENCE_CORRECTION", "EXPLORATION", "PRODUCT_REJECTION", "CHECKOUT_CONFIRM"].includes(understandingPlan.intent || "");
         const shouldForceGreeting = hasGreeting && (!isShoppingIntent || words.length <= 3);
 
         if (shouldForceGreeting || understandingPlan.intent === "GREETING" || understandingPlan.intent === "SMALL_TALK") {
@@ -746,12 +772,13 @@ async function processPostRequest(
 
         const { RuleEngine } = await import("@/lib/intelligence/orchestrator/ruleEngine");
         const { ActionRouter } = await import("@/lib/intelligence/orchestrator/actionRouter");
-        const { BypassRule, TrackOrderRule } = await import("@/lib/intelligence/orchestrator/rules/foundational/basicRules");
+        const { BypassRule, TrackOrderRule, CheckoutRule } = await import("@/lib/intelligence/orchestrator/rules/foundational/basicRules");
         const { ClarificationRule, SearchProductsRule, ShowMoreRule, ExploreCategoriesRule } = await import("@/lib/intelligence/orchestrator/rules/shopping/shoppingRules");
 
         const engine = new RuleEngine();
         engine.registerRule(new BypassRule());
         engine.registerRule(new TrackOrderRule());
+        engine.registerRule(new CheckoutRule());
         engine.registerRule(new ClarificationRule());
         engine.registerRule(new SearchProductsRule());
         engine.registerRule(new ShowMoreRule());
@@ -925,12 +952,11 @@ async function processPostRequest(
         // Prevent "hi" from triggering searches or recommendations.
         // ------------------------------------------------------------
         if (understandingPlan.intent === "GREETING") {
-            const confidence = understandingPlan.intelligenceData?.recommendationConfidence || 0;
             const state = stateMachine.getCurrentState() as any;
             
-            // If it's a greeting, confidence is low, and we aren't in the middle of a checkout
-            if (confidence < 0.8 && state !== "EXPECTING_SELECTION" && state !== "PROCEED_TO_CHECKOUT") {
-                console.log("[Guardrail] Greeting detected with low confidence/idle state. Bypassing shopping pipeline.");
+            // If it's a greeting, and we aren't in the middle of a checkout
+            if (state !== "EXPECTING_SELECTION" && state !== "PROCEED_TO_CHECKOUT") {
+                console.log("[Guardrail] Greeting detected in non-checkout state. Bypassing shopping pipeline.");
                 plan.route = "bypass";
                 plan.mcp_tool_needed = null;
                 understandingPlan.is_shopping_request = false;
@@ -1552,6 +1578,43 @@ async function processPostRequest(
                 const communityScores = await getV15CommunityScores(productIds, contextKey, recipientVal, occasionVal);
                 const trendScores = await getTrendScores(productIds);
 
+                // Find matching relationship for current recipient to avoid cross-relationship dislikes filter
+                const currentRecipientType = (understandingPlan.recipient?.type || "unknown").toLowerCase();
+                const activeRelationship = rawRelationships.find(
+                    (r: any) => r.relationship_type?.toLowerCase() === currentRecipientType
+                );
+
+                // Filter preferences and memories based on active recipient
+                const filteredPrefsAndMemories = [
+                    ...relevanceResult.relevantMemories.filter((m: any) => {
+                        // If it's a relationship memory, check if it matches the current recipient
+                        const keyLower = (m.key || "").toLowerCase();
+                        const isRelMemory = rawRelationships.some((r: any) => r.relationship_type?.toLowerCase() === keyLower);
+                        if (isRelMemory) {
+                            return keyLower === currentRecipientType;
+                        }
+                        return true; // Keep global user memories
+                    }),
+                    ...rawPreferences.filter((p: any) => {
+                        // Keep if it belongs to the active relationship, or is a global user preference (no relationship_id)
+                        if (p.relationship_id) {
+                            return activeRelationship && p.relationship_id === activeRelationship.id;
+                        }
+                        return true;
+                    })
+                ];
+
+                // Extract negative preference tags for hard product rejection
+                const negativeMemoryTags = filteredPrefsAndMemories
+                    .filter((m: any) => {
+                        const val = "interest" in m ? (m.interest || "") : (m.value || "");
+                        return val.toLowerCase().startsWith("dislikes:");
+                    })
+                    .map((m: any) => {
+                        const val = "interest" in m ? (m.interest || "") : (m.value || "");
+                        return val.replace(/^dislikes:\s*/i, "").trim();
+                    });
+
                 const rankingContext = {
                     searchQuery: plan.mcp_search_query || "",
                     situation: occasionVal,
@@ -1562,8 +1625,10 @@ async function processPostRequest(
                     trendScores,
                     queryIntelligence: queryIntelligenceData || [],
                     memoryTags: activeContextTags,
+                    negativeMemoryTags,
                     isBudgetExplicit: !!understandingPlan.budget?.target
                 };
+
 
                 rankingStartTime = Date.now();
                 GodTelemetryService.emit("Ranking Engine", "RUNNING", { candidatesCount: approvedMcpProducts.length });
@@ -2393,6 +2458,67 @@ ${understandingPlan.intent !== "GREETING" && understandingPlan.intelligenceData?
         // Removed fallback to persistent memory if no active context is specified to prevent UI context bleed
         // activeContextTags should strictly contain relevant contextual memories
 
+        const saveGodModeTrace = async () => {
+            try {
+                const capturedStore = godModeStorage.getStore();
+                if (capturedStore) {
+                    const supabaseClient = await createClient();
+                    
+                    // Compile confidence explanations
+                    const positive: string[] = [];
+                    const negative: string[] = [];
+                    if (understandingPlan.budget?.target) positive.push("Budget identified");
+                    else negative.push("Budget limit not set");
+                    
+                    if (understandingPlan.recipient?.type && understandingPlan.recipient.type !== "unknown") positive.push("Recipient identified");
+                    else negative.push("Recipient preferences unknown");
+                    
+                    if (understandingPlan.occasion?.type && understandingPlan.occasion.type !== "unknown") positive.push("Occasion identified");
+                    else negative.push("Occasion not specified");
+                    
+                    if (productsList && productsList.length > 0) positive.push("Candidate products matched successfully");
+                    else negative.push("No catalog matching products found");
+
+                    const confidenceExplanation = { positive, negative };
+
+                    // Compile session summary
+                    const sessionSummary = {
+                        intent: understandingPlan.intent || "unknown",
+                        recipient: understandingPlan.recipient?.type || "unknown",
+                        occasion: understandingPlan.occasion?.type || "unknown",
+                        budget: understandingPlan.budget?.target || null,
+                        evaluatedCount: rawProductCount || 0,
+                        filteredCount: (deduplicatedCount || 0) + (filteredCount || 0) + (semanticRemovedCount || 0),
+                        winningProductId: productsList[0]?.id || null,
+                        winningProductName: productsList[0]?.name || null,
+                        confidence: intelligence.recommendationConfidence || 0.5,
+                        durationMs: Date.now() - traceStartTime
+                    };
+
+                    const { LearningEvidenceService } = await import("@/lib/intelligence/observability/godmode/learningEvidenceService");
+                    const learningProfile = await LearningEvidenceService.getLearningProfile(userId);
+
+                    const { error: insertError } = await supabaseClient.from("godmode_traces").insert({
+                        trace_id: traceId,
+                        user_id: userId,
+                        telemetry_events: capturedStore.telemetryEvents,
+                        product_lifecycles: Object.values(capturedStore.productLifecycles),
+                        replay_steps: capturedStore.replaySteps,
+                        learning_profile: learningProfile,
+                        confidence_explanation: confidenceExplanation,
+                        session_summary: sessionSummary,
+                        engine_health: capturedStore.engineHealth
+                    });
+                    if (insertError) {
+                        import('fs').then(fs => fs.appendFileSync('telemetry_error.log', 'Insert Error: ' + JSON.stringify(insertError) + '\n'));
+                    }
+                }
+            } catch (telemetryError: any) {
+                console.error("Failed to persist God Mode telemetry:", telemetryError);
+                import('fs').then(fs => fs.appendFileSync('telemetry_error.log', telemetryError?.message + '\n' + JSON.stringify(telemetryError) + '\n'));
+            }
+        };
+
         if (toolResults && ((toolResults as any).guardrail_triggered || (toolResults as any).clarification_needed)) {
             const msg = (toolResults as any).message;
             // Guardrails and Clarifications bypass the LLM
@@ -2446,14 +2572,8 @@ ${understandingPlan.intent !== "GREETING" && understandingPlan.intelligenceData?
                 });
             } catch(e) { console.error("saveSnapshot err in bypass route", e); }
 
-            const data = new StreamData();
-            data.append({
-                activeMemories: [...dynamicContextTags, ...activeContextTags],
-                traceReport: { trace_id: traceId },
-                intelligenceTrace: intelligence?.traces || null,
-                judgeModeTrace: judgePayload
-            } as any);
-            data.close();
+            // Save God Mode telemetry before early return
+            await saveGodModeTrace();
 
             // We use a minified JSON response for the bypass message to trigger the fallback in ChatWindow
             return new NextResponse(JSON.stringify({
@@ -2502,13 +2622,14 @@ ${understandingPlan.intent !== "GREETING" && understandingPlan.intelligenceData?
 
         data.append(dataPayload);
 
-        const capturedStore = godModeStorage.getStore();
-
         const { selectFewShots } = await import("@/lib/fewShotLibrary");
         const fewShots = await selectFewShots(
+            message,
             understandingPlan.intent || "SHOPPING",
             activePersona.primary_language,
-            activePersona.tone
+            activePersona.tone,
+            understandingPlan.intelligenceData?.recommendationConfidence || 1.0,
+            history || []
         );
 
         const fewShotMessages: any[] = [];
@@ -2590,65 +2711,7 @@ ${understandingPlan.intent !== "GREETING" && understandingPlan.intelligenceData?
                 } catch(e) { console.error("updateUserTone err", e); }
 
                 // KAPPY GOD MODE TELEMETRY PERSISTENCE - Always persist telemetry
-                if (true) {
-                    try {
-                        if (capturedStore) {
-                            const supabaseClient = await createClient();
-                            
-                            // Compile confidence explanations
-                            const positive: string[] = [];
-                            const negative: string[] = [];
-                            if (understandingPlan.budget?.target) positive.push("Budget identified");
-                            else negative.push("Budget limit not set");
-                            
-                            if (understandingPlan.recipient?.type && understandingPlan.recipient.type !== "unknown") positive.push("Recipient identified");
-                            else negative.push("Recipient preferences unknown");
-                            
-                            if (understandingPlan.occasion?.type && understandingPlan.occasion.type !== "unknown") positive.push("Occasion identified");
-                            else negative.push("Occasion not specified");
-                            
-                            if (productsList && productsList.length > 0) positive.push("Candidate products matched successfully");
-                            else negative.push("No catalog matching products found");
-
-                            const confidenceExplanation = { positive, negative };
-
-                            // Compile session summary
-                            const sessionSummary = {
-                                intent: understandingPlan.intent || "unknown",
-                                recipient: understandingPlan.recipient?.type || "unknown",
-                                occasion: understandingPlan.occasion?.type || "unknown",
-                                budget: understandingPlan.budget?.target || null,
-                                evaluatedCount: rawProductCount || 0,
-                                filteredCount: (deduplicatedCount || 0) + (filteredCount || 0) + (semanticRemovedCount || 0),
-                                winningProductId: productsList[0]?.id || null,
-                                winningProductName: productsList[0]?.name || null,
-                                confidence: intelligence.recommendationConfidence || 0.5,
-                                durationMs: Date.now() - traceStartTime
-                            };
-
-                            const { LearningEvidenceService } = await import("@/lib/intelligence/observability/godmode/learningEvidenceService");
-                            const learningProfile = await LearningEvidenceService.getLearningProfile(userId);
-
-                            const { error: insertError } = await supabaseClient.from("godmode_traces").insert({
-                                trace_id: traceId,
-                                user_id: userId,
-                                telemetry_events: capturedStore.telemetryEvents,
-                                product_lifecycles: Object.values(capturedStore.productLifecycles),
-                                replay_steps: capturedStore.replaySteps,
-                                learning_profile: learningProfile,
-                                confidence_explanation: confidenceExplanation,
-                                session_summary: sessionSummary,
-                                engine_health: capturedStore.engineHealth
-                            });
-                            if (insertError) {
-                                import('fs').then(fs => fs.appendFileSync('telemetry_error.log', 'Insert Error: ' + JSON.stringify(insertError) + '\n'));
-                            }
-                        }
-                    } catch (telemetryError: any) {
-                        console.error("Failed to persist God Mode telemetry:", telemetryError);
-                        import('fs').then(fs => fs.appendFileSync('telemetry_error.log', telemetryError?.message + '\n' + JSON.stringify(telemetryError) + '\n'));
-                    }
-                }
+                await saveGodModeTrace();
 
                 data.close();
             }

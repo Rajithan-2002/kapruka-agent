@@ -84,6 +84,28 @@ export async function POST(request: Request) {
             );
         }
 
+        // Wire product actions into the affinity learning engine
+        const affinityActionMap: Record<string, string | null> = {
+            "purchased": "PURCHASE",
+            "reordered": "PURCHASE",
+            "added_to_bundle": "ADD_TO_BUNDLE",
+            "viewed": "CLICK",
+            "expand": "CLICK"
+        };
+        const affinityAction = affinityActionMap[action];
+        if (affinityAction && product.category) {
+            try {
+                const { AffinityEngine } = await import("@/lib/intelligence/recommendation/affinityEngine");
+                const rawCat = product.category;
+                const categoryStr = typeof rawCat === "object" && rawCat !== null 
+                    ? (rawCat.name || rawCat.id || "general") 
+                    : (rawCat || "general");
+                await AffinityEngine.recordInteraction(userId, "category", categoryStr.toLowerCase(), affinityAction as any);
+            } catch (err) {
+                console.warn("[Track] AffinityEngine update failed (non-critical):", err);
+            }
+        }
+
         return NextResponse.json({ success: true });
     } catch (error: any) {
         console.error("Tracking API Error:", error);

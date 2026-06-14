@@ -2,6 +2,12 @@ import { RecommendationCandidate } from "./types";
 import { AffinityRecord } from "./affinityEngine";
 import { FeatureFlags } from "../config/featureFlags";
 
+export interface MemoryInfluenceRecord {
+    memory: string;          // e.g. "likes coffee"
+    scoreDelta: number;      // e.g. +0.05 or 0 for blocked
+    blocked: boolean;        // true if this was a negative match causing rejection
+}
+
 export interface RankingContext {
     searchQuery: string;
     situation: string; // occasion type (e.g. "birthday")
@@ -11,7 +17,8 @@ export interface RankingContext {
     communityScores: Record<string, { likeRate: number; purchaseRate: number; bundleRate: number; score: number }>;
     trendScores: Record<string, number>;
     queryIntelligence?: { entity: string; score: number }[];
-    memoryTags?: string[];
+    memoryTags?: string[];         // positive memory tags for boosting
+    negativeMemoryTags?: string[]; // negative preference tags for hard rejection
     isBudgetExplicit?: boolean;
 }
 
@@ -98,6 +105,37 @@ export class RankingEngine {
                 finalScore = 0.0;
             }
 
+            // Negative memory — hard rejection before returning
+            const isNegativeBlocked = this.calcNegativePenalty(p, context.negativeMemoryTags || []);
+            if (isNegativeBlocked) {
+                finalScore = 0.0;
+            }
+
+            // Build memory influence record for God Mode
+            const memoryInfluence: MemoryInfluenceRecord[] = [];
+            if (isNegativeBlocked) {
+                const matchedTag = (context.negativeMemoryTags || []).find(tag => {
+                    const pStr = (p.name + " " + (p.tags || "") + " " + (p.summary || "")).toLowerCase();
+                    return pStr.includes(tag.toLowerCase());
+                });
+                if (matchedTag) {
+                    memoryInfluence.push({ memory: `dislikes ${matchedTag}`, scoreDelta: 0, blocked: true });
+                }
+            } else if (memoryBoostScore > 0) {
+                const matchedTag = (context.memoryTags || []).find(tag => {
+                    const keyword = tag.split(" ").pop()?.toLowerCase();
+                    const pStr = (p.tags || p.name || "").toLowerCase();
+                    return keyword && pStr.includes(keyword);
+                });
+                if (matchedTag) {
+                    memoryInfluence.push({
+                        memory: matchedTag,
+                        scoreDelta: parseFloat((memoryBoostScore * 0.05).toFixed(3)),
+                        blocked: false
+                    });
+                }
+            }
+
             return {
                 productId: pid,
                 productData: p,
@@ -109,7 +147,8 @@ export class RankingEngine {
                 memoryBoostScore,
                 communityScore,
                 trendScore,
-                finalScore: parseFloat(finalScore.toFixed(3))
+                finalScore: parseFloat(finalScore.toFixed(3)),
+                memoryInfluence
             };
         });
 
@@ -239,6 +278,16 @@ export class RankingEngine {
             }
         }
         return 0.0;
+    }
+
+    /**
+     * Returns true if the product matches any negative memory tag (dislike).
+     * Used to hard-reject products the user/recipient dislikes.
+     */
+    private static calcNegativePenalty(product: any, negativeTags: string[]): boolean {
+        if (!negativeTags?.length) return false;
+        const pTags = (product.name + " " + (product.tags || "") + " " + (product.summary || "") + " " + (product.category?.name || product.category || "")).toLowerCase();
+        return negativeTags.some(tag => pTags.includes(tag.toLowerCase()));
     }
 
     private static calcQueryIntelligenceBoost(product: any, intelligenceRecords: { entity: string; score: number }[]): number {
