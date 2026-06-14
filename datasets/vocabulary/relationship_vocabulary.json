@@ -1,0 +1,323 @@
+[
+  {
+    "id": "IS144",
+    "input": "amma ta",
+    "normalized": "for mother",
+    "language": "Singlish",
+    "category": "relationship",
+    "confidence": "HIGH",
+    "implied_intent": "RECIPIENT_MOTHER",
+    "implied_flag": null,
+    "usage_example": "amma ta gift ekak one",
+    "aliases": [
+      "amma ta",
+      "ammata",
+      "amma ge"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS145",
+    "input": "appachchi ta",
+    "normalized": "for father",
+    "language": "Singlish",
+    "category": "relationship",
+    "confidence": "HIGH",
+    "implied_intent": "RECIPIENT_FATHER",
+    "implied_flag": null,
+    "usage_example": "appachchi ta monawahari one",
+    "aliases": [
+      "appachchi ta",
+      "appachi ta",
+      "thaththa ta"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS146",
+    "input": "nangi ta",
+    "normalized": "for younger sister",
+    "language": "Singlish",
+    "category": "relationship",
+    "confidence": "HIGH",
+    "implied_intent": "RECIPIENT_YOUNGER_SISTER",
+    "implied_flag": null,
+    "usage_example": "nangi ta birthday gift ekak one",
+    "aliases": [
+      "nangi ta",
+      "nangita"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS147",
+    "input": "malli ta",
+    "normalized": "for younger brother",
+    "language": "Singlish",
+    "category": "relationship",
+    "confidence": "HIGH",
+    "implied_intent": "RECIPIENT_YOUNGER_BROTHER",
+    "implied_flag": null,
+    "usage_example": "malli ta gift ekak one",
+    "aliases": [
+      "malli ta",
+      "mallita"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS148",
+    "input": "akka ta",
+    "normalized": "for older sister",
+    "language": "Singlish",
+    "category": "relationship",
+    "confidence": "HIGH",
+    "implied_intent": "RECIPIENT_OLDER_SISTER",
+    "implied_flag": null,
+    "usage_example": "akka ta surprise ekak one",
+    "aliases": [
+      "akka ta",
+      "akkata"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS149",
+    "input": "aiya ta",
+    "normalized": "for older brother",
+    "language": "Singlish",
+    "category": "relationship",
+    "confidence": "HIGH",
+    "implied_intent": "RECIPIENT_OLDER_BROTHER",
+    "implied_flag": null,
+    "usage_example": "aiya ta gift ekak one",
+    "aliases": [
+      "aiya ta",
+      "aiyata"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS150",
+    "input": "wife ta",
+    "normalized": "for wife",
+    "language": "Mixed",
+    "category": "relationship",
+    "confidence": "HIGH",
+    "implied_intent": "RECIPIENT_WIFE",
+    "implied_flag": null,
+    "usage_example": "wife ta birthday gift ekak one",
+    "aliases": [
+      "wife ta",
+      "nona ta",
+      "mage wife ta"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS151",
+    "input": "husband ta",
+    "normalized": "for husband",
+    "language": "Mixed",
+    "category": "relationship",
+    "confidence": "HIGH",
+    "implied_intent": "RECIPIENT_HUSBAND",
+    "implied_flag": null,
+    "usage_example": "husband ta anniversary gift ekak one",
+    "aliases": [
+      "husband ta",
+      "mahattaya ta"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS152",
+    "input": "boss ta",
+    "normalized": "for boss",
+    "language": "Mixed",
+    "category": "relationship",
+    "confidence": "HIGH",
+    "implied_intent": "RECIPIENT_BOSS",
+    "implied_flag": null,
+    "usage_example": "boss ta corporate gift ekak one",
+    "aliases": [
+      "boss ta",
+      "manager ta"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS153",
+    "input": "friend ta",
+    "normalized": "for friend",
+    "language": "Mixed",
+    "category": "relationship",
+    "confidence": "HIGH",
+    "implied_intent": "RECIPIENT_FRIEND",
+    "implied_flag": null,
+    "usage_example": "friend ta birthday gift ekak one",
+    "aliases": [
+      "friend ta",
+      "yaluwekta",
+      "machan ta"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS154",
+    "input": "appa ku",
+    "normalized": "for father",
+    "language": "Tanglish",
+    "category": "relationship",
+    "confidence": "HIGH",
+    "implied_intent": "RECIPIENT_FATHER",
+    "implied_flag": null,
+    "usage_example": "appa ku gift venum",
+    "aliases": [
+      "appa ku",
+      "appa kku",
+      "appa-ku"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS155",
+    "input": "amma ku",
+    "normalized": "for mother",
+    "language": "Tanglish",
+    "category": "relationship",
+    "confidence": "HIGH",
+    "implied_intent": "RECIPIENT_MOTHER",
+    "implied_flag": null,
+    "usage_example": "amma ku birthday gift venum",
+    "aliases": [
+      "amma ku",
+      "amma kku"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS156",
+    "input": "thangachi ku",
+    "normalized": "for younger sister",
+    "language": "Tanglish",
+    "category": "relationship",
+    "confidence": "HIGH",
+    "implied_intent": "RECIPIENT_YOUNGER_SISTER",
+    "implied_flag": null,
+    "usage_example": "thangachi ku gift venum",
+    "aliases": [
+      "thangachi ku",
+      "thangachikku"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS157",
+    "input": "anna ku",
+    "normalized": "for older brother",
+    "language": "Tanglish",
+    "category": "relationship",
+    "confidence": "HIGH",
+    "implied_intent": "RECIPIENT_OLDER_BROTHER",
+    "implied_flag": null,
+    "usage_example": "anna ku gift venum",
+    "aliases": [
+      "anna ku",
+      "annakku"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS158",
+    "input": "அம்மாவுக்கு",
+    "normalized": "for mother",
+    "language": "Tamil",
+    "category": "relationship",
+    "confidence": "HIGH",
+    "implied_intent": "RECIPIENT_MOTHER",
+    "implied_flag": null,
+    "usage_example": "அம்மாவுக்கு பரிசு வேண்டும்",
+    "aliases": [
+      "அம்மாவுக்கு"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS159",
+    "input": "அப்பாவுக்கு",
+    "normalized": "for father",
+    "language": "Tamil",
+    "category": "relationship",
+    "confidence": "HIGH",
+    "implied_intent": "RECIPIENT_FATHER",
+    "implied_flag": null,
+    "usage_example": "அப்பாவுக்கு பரிசு வேண்டும்",
+    "aliases": [
+      "அப்பாவுக்கு"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS160",
+    "input": "අම්මාට",
+    "normalized": "for mother",
+    "language": "Sinhala",
+    "category": "relationship",
+    "confidence": "HIGH",
+    "implied_intent": "RECIPIENT_MOTHER",
+    "implied_flag": null,
+    "usage_example": "අම්මාට තෑග්ගක් ඕනේ",
+    "aliases": [
+      "අම්මාට"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS161",
+    "input": "තාත්තාට",
+    "normalized": "for father",
+    "language": "Sinhala",
+    "category": "relationship",
+    "confidence": "HIGH",
+    "implied_intent": "RECIPIENT_FATHER",
+    "implied_flag": null,
+    "usage_example": "තාත්තාට මොනවහරි ඕනේ",
+    "aliases": [
+      "තාත්තාට"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS162",
+    "input": "for my wife",
+    "normalized": "for wife",
+    "language": "English",
+    "category": "relationship",
+    "confidence": "HIGH",
+    "implied_intent": "RECIPIENT_WIFE",
+    "implied_flag": null,
+    "usage_example": "need something for my wife",
+    "aliases": [
+      "for my wife",
+      "for wife"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS163",
+    "input": "for my parents",
+    "normalized": "for parents",
+    "language": "English",
+    "category": "relationship",
+    "confidence": "HIGH",
+    "implied_intent": "RECIPIENT_PARENTS",
+    "implied_flag": null,
+    "usage_example": "sending something for my parents",
+    "aliases": [
+      "for my parents",
+      "for parents"
+    ],
+    "do_not_confuse_with": null
+  }
+]
