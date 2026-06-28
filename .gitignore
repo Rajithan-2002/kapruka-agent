@@ -46,3 +46,5 @@ backend/.env
 
 # typescript
 next-env.d.ts
+
+audits/

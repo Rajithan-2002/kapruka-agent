@@ -54,7 +54,7 @@ export const SituationContextSchema = z.object({
 export const PsychologyContextSchema = z.object({
   primaryTrigger: TriggerTypeSchema.default("UNKNOWN"),
   secondaryTrigger: TriggerTypeSchema.nullable().optional(),
-  emotionalIntensity: z.number().min(1).max(10).default(5)
+  emotionalIntensity: z.number().min(0).max(10).catch(5)
 }).default({
   primaryTrigger: "UNKNOWN",
   emotionalIntensity: 5
@@ -113,6 +113,11 @@ export const ExtractionResultSchema = z.object({
   preference_corrections: z.array(PreferenceCorrectionSchema).nullish().transform(v => v || []),
   price_refinement: PriceRefinementSchema.nullable().optional().catch(null),
   extracted_memory: ExtractedMemorySchema.nullable().optional().catch(null),
+  new_slang_detected: z.array(z.object({
+    slang_word: z.string(),
+    standard_english: z.string(),
+    category: z.enum(["RELATIONSHIP", "PRODUCT", "OCCASION", "OTHER"]).catch("OTHER")
+  })).nullable().optional().catch(null),
   missingInfo: MissingInfoSchema
 });
 
@@ -140,6 +145,7 @@ export function getSafeExtractionFallback(message: string): z.infer<typeof Extra
     recommendation_mode: "FAST",
     preference_corrections: [],
     extracted_memory: null,
+    new_slang_detected: null,
     missingInfo: {
       isMissingCriticalInfo: false,
       missingFields: []

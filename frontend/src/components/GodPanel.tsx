@@ -54,9 +54,20 @@ interface GodPanelProps {
     relationships?: any[];
     preferences?: any[];
     activeMemories?: string[];
+    onToggleFilter?: (filters: any) => void;
 }
 
-export default function GodPanel({ traceId, onClose, relationships = [], preferences = [], activeMemories = [] }: GodPanelProps) {
+export default function GodPanel({ traceId, onClose, relationships = [], preferences = [], activeMemories = [], onToggleFilter }: GodPanelProps) {
+    const [godModeFilters, setGodModeFilters] = useState<any>({ disableSemantic: false });
+    
+    const handleFilterToggle = (filterName: string) => {
+        const updated = { ...godModeFilters, [filterName]: !godModeFilters[filterName] };
+        setGodModeFilters(updated);
+        if (onToggleFilter) {
+            onToggleFilter(updated);
+        }
+    };
+
     const [activeTab, setActiveTab] = useState<"overview" | "funnel" | "memory" | "decisions" | "replay" | "compare" | "learning">("overview");
     const [tabData, setTabData] = useState<Record<string, any>>({});
     const [loadingTabs, setLoadingTabs] = useState<Record<string, boolean>>({});
@@ -191,7 +202,7 @@ export default function GodPanel({ traceId, onClose, relationships = [], prefere
                     product_name: p.productName,
                     rejection_stage: rejectStage?.stage || "Unknown",
                     rejection_reason: getNormalizedRejectionReason(rejectStage?.reason || "Low relevance"),
-                    kapruka_url: `https://www.kapruka.com/buyonline/${p.productId}`
+                    kapruka_url: p.url || `https://www.kapruka.com/buyonline/${p.productId}`
                 };
             });
 
@@ -686,6 +697,23 @@ export default function GodPanel({ traceId, onClose, relationships = [], prefere
                 {/* 🧬 FUNNEL TAB */}
                 {activeTab === "funnel" && tabData.funnel && (
                     <div className="flex flex-col gap-5 animate-fade-in">
+                        {/* God Mode Toggles */}
+                        <div className="bg-slate-900 border border-white/10 rounded-xl p-4 space-y-3 shadow-xl">
+                            <h3 className="text-xs font-bold text-cyan-400 uppercase tracking-wider border-b border-white/5 pb-2">Pipeline Filter Toggles</h3>
+                            <div className="flex flex-wrap gap-3">
+                                <label className="flex items-center gap-2 text-xs font-bold text-slate-300 cursor-pointer p-2 bg-slate-950/50 rounded-lg border border-slate-800 hover:border-slate-700">
+                                    <input 
+                                        type="checkbox" 
+                                        className="accent-cyan-500 w-4 h-4 cursor-pointer"
+                                        checked={!godModeFilters.disableSemantic}
+                                        onChange={() => handleFilterToggle('disableSemantic')}
+                                    />
+                                    Semantic AI Guardrail
+                                </label>
+                            </div>
+                            <p className="text-[10px] text-slate-500 italic">Toggling filters will automatically replay your last query to test pipeline behavior.</p>
+                        </div>
+                        
                         {/* Visual Funnel Chart */}
                         <div className="bg-slate-900/50 border border-white/10 rounded-xl p-4 flex flex-col gap-4">
                             <h3 className="text-xs font-bold text-cyan-400 uppercase tracking-wider border-b border-white/5 pb-2">Recommendation Funnel</h3>
@@ -940,38 +968,14 @@ export default function GodPanel({ traceId, onClose, relationships = [], prefere
                 {/* 🧠 MEMORY & LEARNING TAB */}
                 {activeTab === "memory" && tabData.memory && (
                     <div className="flex flex-col gap-5 animate-fade-in">
-                        {/* Memory Vault Modal Trigger */}
-                        <div className="bg-slate-900/50 border border-white/10 rounded-xl p-4 flex flex-col gap-3">
-                            <h3 className="text-xs font-bold text-cyan-400 uppercase tracking-wider border-b border-white/5 pb-2">Global Memory Vault</h3>
-                            <p className="text-xs text-slate-400">View and manage long-term memories, relationships, and preferences that power Kappy's personalized intelligence.</p>
-                            <button 
-                                onClick={() => setIsMemoryVaultOpen(true)}
-                                className="w-full py-2 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 rounded-lg text-xs font-bold text-cyan-400 transition-colors flex items-center justify-center gap-2"
-                            >
-                                <Brain className="w-4 h-4" /> Open Memory Vault
-                            </button>
+                        {/* Memory Vault Inline */}
+                        <div className="bg-slate-900 border border-white/10 rounded-xl overflow-hidden shadow-xl relative" style={{ minHeight: '400px', maxHeight: '500px' }}>
+                            <MemoryVault 
+                                relationships={relationships} 
+                                preferences={preferences} 
+                                activeMemories={activeMemories} 
+                            />
                         </div>
-                        
-                        {/* Memory Vault Modal */}
-                        {isMemoryVaultOpen && typeof MemoryVault !== 'undefined' && (
-                            <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
-                                <div className="bg-slate-900 border border-white/10 rounded-xl overflow-hidden w-full max-w-2xl h-[80vh] flex flex-col shadow-2xl animate-fade-in relative">
-                                    <button 
-                                        onClick={() => setIsMemoryVaultOpen(false)}
-                                        className="absolute right-4 top-4 z-10 p-2 bg-slate-800/50 hover:bg-slate-800 rounded-full text-slate-300 transition-colors"
-                                    >
-                                        <X className="w-4 h-4" />
-                                    </button>
-                                    <div className="flex-1 overflow-hidden relative pt-2">
-                                        <MemoryVault 
-                                            relationships={relationships} 
-                                            preferences={preferences} 
-                                            activeMemories={activeMemories} 
-                                        />
-                                    </div>
-                                </div>
-                            </div>
-                        )}
                         {/* Memory Observatory */}
                         <div className="bg-slate-900/50 border border-white/10 rounded-xl p-4 flex flex-col gap-3">
                             <h3 className="text-xs font-bold text-cyan-400 uppercase tracking-wider border-b border-white/5 pb-2 flex items-center justify-between">
@@ -1373,11 +1377,32 @@ export default function GodPanel({ traceId, onClose, relationships = [], prefere
                                                 })()}
                                             </div>
                                             {/* Outputs snapshot */}
-                                            <div className="flex flex-col gap-1.5">
+                                            <div className="flex flex-col gap-2">
                                                 <span className="text-emerald-400 font-bold uppercase tracking-wider text-[9px]">Outputs / Decisions:</span>
-                                                <pre className="p-3 bg-slate-950 rounded border border-white/5 overflow-x-auto text-[10px] leading-relaxed max-h-[150px] custom-scrollbar text-slate-300">
-                                                    {JSON.stringify(activeStep.outputSnapshot, null, 2)}
-                                                </pre>
+                                                <div className="p-3 bg-slate-950 rounded-xl border border-emerald-900/30 flex flex-col gap-3 max-h-[250px] overflow-y-auto custom-scrollbar">
+                                                    {activeStep.outputSnapshot ? Object.entries(activeStep.outputSnapshot).map(([k, v]) => (
+                                                        <div key={k} className="flex flex-col gap-1">
+                                                            <span className="text-[9px] text-slate-500 font-bold uppercase tracking-wider">{k.replace(/([A-Z])/g, ' $1').trim()}</span>
+                                                            {Array.isArray(v) ? (
+                                                                <div className="flex flex-wrap gap-1.5 mt-0.5">
+                                                                    {v.length === 0 ? <span className="text-[10px] text-slate-600 font-medium">Empty Array</span> : v.map((item: any, i: number) => (
+                                                                        <span key={i} className="px-2 py-1 bg-slate-900 text-slate-300 rounded text-[10px] border border-slate-800 font-medium">
+                                                                            {item?.name || item?.id || (typeof item === 'string' ? item : JSON.stringify(item))}
+                                                                        </span>
+                                                                    ))}
+                                                                </div>
+                                                            ) : typeof v === 'object' && v !== null ? (
+                                                                <pre className="text-[10px] text-slate-400 font-mono bg-slate-900 p-2 rounded border border-slate-800">
+                                                                    {JSON.stringify(v, null, 2)}
+                                                                </pre>
+                                                            ) : (
+                                                                <span className="text-xs font-black text-emerald-300">{String(v)}</span>
+                                                            )}
+                                                        </div>
+                                                    )) : (
+                                                        <span className="text-xs text-slate-600 italic">No output data</span>
+                                                    )}
+                                                </div>
                                             </div>
                                         </div>
                                     </div>

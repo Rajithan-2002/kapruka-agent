@@ -642,7 +642,7 @@ export default function ChatWindow() {
   };
 
   // Core messaging flow
-  const handleSendMessage = async (text: string, overrideSessionId?: string) => {
+  const handleSendMessage = async (text: string, overrideSessionId?: string, godModeFilters?: any) => {
     const userMsgId = getUniqueId("user");
     setMessages(prev => [...prev, { id: userMsgId, role: "user", content: text }]);
     
@@ -661,7 +661,8 @@ export default function ChatWindow() {
           message: text,
           history: chatHistory,
           sessionId: overrideSessionId || activeConversationId,
-          godModeEnabled: isGodMode
+          godModeEnabled: isGodMode,
+          godModeFilters: godModeFilters
         }),
       });
 
@@ -772,6 +773,9 @@ export default function ChatWindow() {
       if (targetSessionId) {
         loadActiveSnapshot(targetSessionId);
       }
+      
+      // Auto-refresh memory and relationships after successful completion
+      await loadUserRelationships();
     } catch (error) {
       console.error(error);
       setIsTyping(false);
@@ -2427,6 +2431,12 @@ export default function ChatWindow() {
           relationships={relationships}
           preferences={preferences}
           activeMemories={activeMemories} 
+          onToggleFilter={(filters) => {
+             const lastUserMsg = messages.filter(m => m.role === "user").pop();
+             if (lastUserMsg) {
+                 handleSendMessage(lastUserMsg.content, undefined, filters);
+             }
+          }}
         />
       )}
     </div>

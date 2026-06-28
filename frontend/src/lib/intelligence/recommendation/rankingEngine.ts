@@ -92,9 +92,9 @@ export class RankingEngine {
             // Apply boosts
             let finalScore = (rawScore + (memoryBoostScore * 0.05)) * intelMultiplier;
 
-            // Apply child context penalty
+            // Apply child context penalty - refined from 0.05 to 0.5 to prevent complete wipeout
             if (p.childPenalty) {
-                finalScore *= 0.05;
+                finalScore *= 0.5;
             }
 
             // Hard constraints check: out of stock or completely out of budget range receives severe penalty
@@ -287,7 +287,14 @@ export class RankingEngine {
     private static calcNegativePenalty(product: any, negativeTags: string[]): boolean {
         if (!negativeTags?.length) return false;
         const pTags = (product.name + " " + (product.tags || "") + " " + (product.summary || "") + " " + (product.category?.name || product.category || "")).toLowerCase();
-        return negativeTags.some(tag => pTags.includes(tag.toLowerCase()));
+        return negativeTags.some(tag => {
+            const cleanTag = tag.trim().toLowerCase();
+            if (cleanTag.length < 3) return false;
+            // Use bounded word matching so substrings of words don't trigger rejection (e.g. "tea" matching "steam")
+            const escapedTag = cleanTag.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+            const regex = new RegExp(`\\b${escapedTag}\\b`, 'i');
+            return regex.test(pTags);
+        });
     }
 
     private static calcQueryIntelligenceBoost(product: any, intelligenceRecords: { entity: string; score: number }[]): number {

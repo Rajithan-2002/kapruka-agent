@@ -1,6 +1,20 @@
 import OpenAI from "openai";
 import { godModeStorage } from "@/lib/intelligence/observability/godmode/storage";
 
+async function getSupabaseClient() {
+    try {
+        const { createClient } = await import("@/lib/supabase/server");
+        return await createClient();
+    } catch (err) {
+        console.warn("[Few-Shots] cookies() context not available (running outside request scope). Falling back to static db client.");
+        const { supabase } = await import("@/lib/db");
+        if (!supabase) {
+            throw new Error("Supabase static client is not initialized.");
+        }
+        return supabase;
+    }
+}
+
 export interface FewShotExample {
     intent: string;
     language: string;
@@ -385,8 +399,7 @@ export async function fetchFewShotsCached(): Promise<FewShotExample[]> {
     }
 
     try {
-        const { createClient } = await import("@/lib/supabase/server");
-        const supabase = await createClient();
+        const supabase = await getSupabaseClient();
         const { data, error } = await supabase
             .from("kappy_few_shots")
             .select("intent, language, emotion, user_query, assistant_response");
@@ -467,8 +480,7 @@ export async function selectFewShots(
             }
 
             // Call Supabase RPC similarity search (allowed_languages hard filter is applied at query level)
-            const { createClient } = await import("@/lib/supabase/server");
-            const supabase = await createClient();
+            const supabase = await getSupabaseClient();
             const { data, error } = await supabase.rpc("match_few_shots", {
                 query_embedding: queryEmbedding,
                 allowed_languages: allowedLanguages,

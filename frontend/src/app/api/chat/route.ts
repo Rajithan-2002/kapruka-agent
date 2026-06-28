@@ -107,6 +107,38 @@ async function fetchVocabularyCached(): Promise<CachedVocabulary> {
     return vocabCache;
 }
 
+let lexiconCache: string | null = null;
+let lastLexiconFetchTime = 0;
+const LEXICON_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+async function fetchCommunityLexiconCached(): Promise<string> {
+    const now = Date.now();
+    if (lexiconCache !== null && (now - lastLexiconFetchTime < LEXICON_CACHE_TTL)) {
+        return lexiconCache;
+    }
+
+    try {
+        const { createClient } = await import("@/lib/supabase/server");
+        const supabase = await createClient();
+        const { data, error } = await supabase
+            .from("kappy_community_lexicon")
+            .select("slang_word, standard_english")
+            .eq("status", "APPROVED");
+
+        if (!error && data && data.length > 0) {
+            lexiconCache = data.map(r => `${r.slang_word} -> ${r.standard_english}`).join(", ");
+        } else {
+            lexiconCache = "";
+        }
+    } catch (err) {
+        console.error("[Community Lexicon] Exception fetching approved lexicon:", err);
+        lexiconCache = "";
+    }
+
+    lastLexiconFetchTime = now;
+    return lexiconCache;
+}
+
 async function detectPersonaFromMessage(msg: string): Promise<DetectedPersona> {
     const msgLower = msg.toLowerCase();
     const hasSinhalaUnicode = /[\u0D80-\u0DFF]/.test(msg);
@@ -320,7 +352,7 @@ async function processPostRequest(
     isSampled: boolean
 ) {
     const sessionTraces: any[] = [];
-    const { message, history } = requestBody;
+    const { message, history, godModeFilters } = requestBody;
 
     try {
         const { CircuitBreaker } = await import("@/lib/intelligence/services/circuitBreaker");
@@ -551,7 +583,8 @@ async function processPostRequest(
         } else {
             const { IntelligenceOrchestrator } = await import("@/lib/intelligence/orchestrator/intelligenceOrchestrator");
             const orchestrator = new IntelligenceOrchestrator();
-            intelligence = await orchestrator.processRequest(userId, message, history || []);
+            const lexiconString = await fetchCommunityLexiconCached();
+            intelligence = await orchestrator.processRequest(userId, message, history || [], lexiconString);
         }
 
         console.log("Kappy Intelligence Engine Plan:", JSON.stringify(intelligence, null, 2));
@@ -595,8 +628,53 @@ async function processPostRequest(
             needs_history: false,
             emotion: intelligence.psychology?.primaryTrigger || "neutral",
             mapped_category: intelligence.mapped_category || "UNKNOWN",
+            extracted_memory: intelligence.extracted_memory || null,
+            new_slang_detected: intelligence.new_slang_detected || null,
             intelligenceData: intelligence
         };
+
+        // --- Community Lexicon Pipeline: Auto-Save Slang ---
+        if (understandingPlan.new_slang_detected && understandingPlan.new_slang_detected.length > 0) {
+            try {
+                const { createClient } = await import("@/lib/supabase/server");
+                const supabaseClient = await createClient();
+                
+                for (const slang of understandingPlan.new_slang_detected) {
+                    const cleanSlang = slang.slang_word.toLowerCase().trim();
+                    const cleanEnglish = slang.standard_english.toLowerCase().trim();
+                    
+                    // Check if it already exists
+                    const { data: existing } = await supabaseClient
+                        .from('kappy_community_lexicon')
+                        .select('id, votes')
+                        .eq('slang_word', cleanSlang)
+                        .eq('standard_english', cleanEnglish)
+                        .single();
+
+                    if (existing) {
+                        const newVotes = existing.votes + 1;
+                        const newStatus = newVotes >= 7 ? 'APPROVED' : 'PENDING';
+                        await supabaseClient
+                            .from('kappy_community_lexicon')
+                            .update({ votes: newVotes, status: newStatus })
+                            .eq('id', existing.id);
+                    } else {
+                        await supabaseClient
+                            .from('kappy_community_lexicon')
+                            .insert({
+                                slang_word: cleanSlang,
+                                standard_english: cleanEnglish,
+                                category: slang.category,
+                                votes: 1,
+                                status: 'PENDING'
+                            });
+                    }
+                }
+            } catch (err) {
+                console.error("[Community Lexicon] Failed to save detected slang:", err);
+            }
+        }
+        // ---------------------------------------------------
 
         // Exploration Query Builder
         if (intelligence.intent === "EXPLORATION") {
@@ -1310,7 +1388,7 @@ async function processPostRequest(
                 GodTelemetryService.emit("Retrieval Engine", "RUNNING", { query: plan.mcp_search_query });
 
                 const translatedQuery = await translateSearchQuery(plan.mcp_search_query || "");
-                let rawProducts = await mcpSearchProducts(translatedQuery, 40);
+                let rawProducts = await mcpSearchProducts(translatedQuery, 100);
                 
                 // Fallback items if MCP is offline / empty
                 if (!rawProducts || rawProducts.length === 0) {
@@ -1357,7 +1435,13 @@ async function processPostRequest(
 
                 rawProductCount = rawProducts.length;
                 GodTelemetryService.emit("Retrieval Engine", "COMPLETED", { query: plan.mcp_search_query, count: rawProductCount });
-                ReplayService.recordStep("Product Retrieval", { query: plan.mcp_search_query }, { count: rawProductCount, products: rawProducts });
+                ReplayService.recordStep("Product Retrieval", { 
+                    query: plan.mcp_search_query,
+                    location: plan.delivery_city || understandingPlan.intelligenceData?.situation?.location || "Colombo",
+                    budget: understandingPlan.budget?.target,
+                    occasion: understandingPlan.occasion?.type,
+                    recipient: understandingPlan.recipient?.type
+                }, { count: rawProductCount, products: rawProducts });
 
                 // Map to standardized format using ProductAdapter
                 const mappedProducts: CanonicalProductV1[] = rawProducts.map(p => ProductAdapter.adaptMCPProduct(p));
@@ -1369,7 +1453,8 @@ async function processPostRequest(
                         p.name,
                         "RETRIEVED",
                         "APPROVED",
-                        "Retrieved from Kapruka catalog search"
+                        "Retrieved from Kapruka catalog search",
+                        p.url
                     );
                 });
 
@@ -1652,13 +1737,19 @@ async function processPostRequest(
 
                 // --- STAGE 3: SEMANTIC GARBAGE FILTER ---
                 const { runSemanticIrrelevanceFilter } = await import("@/lib/intelligence/recommendation/semanticFilter");
-                GodTelemetryService.emit("Semantic Filter", "RUNNING", { count: rankedCandidates.length });
-                const irrelevantIds = await runSemanticIrrelevanceFilter(
-                    plan.shopping_stage || plan.mcp_search_query || "",
-                    understandingPlan.mapped_category || "UNKNOWN",
-                    rankedCandidates.map(c => ({ id: c.productId, name: c.productData.name, category: c.productData.category }))
-                );
-                GodTelemetryService.emit("Semantic Filter", "COMPLETED", { irrelevantCount: irrelevantIds.length });
+                let irrelevantIds: string[] = [];
+                if (godModeFilters?.disableSemantic) {
+                    console.log("[God Mode] Semantic Filter bypassed by toggle.");
+                    GodTelemetryService.emit("Semantic Filter", "COMPLETED", { count: rankedCandidates.length });
+                } else {
+                    GodTelemetryService.emit("Semantic Filter", "RUNNING", { count: rankedCandidates.length });
+                    irrelevantIds = await runSemanticIrrelevanceFilter(
+                        plan.shopping_stage || plan.mcp_search_query || "",
+                        understandingPlan.mapped_category || "UNKNOWN",
+                        rankedCandidates.map(c => ({ id: c.productId, name: c.productData.name, category: c.productData.category }))
+                    );
+                    GodTelemetryService.emit("Semantic Filter", "COMPLETED", { irrelevantCount: irrelevantIds.length });
+                }
 
                 rankedCandidates.forEach((c: any) => {
                     const isIrrelevant = irrelevantIds.includes(c.productId);
@@ -1667,7 +1758,7 @@ async function processPostRequest(
                         c.productData.name,
                         "SEMANTIC_FILTER",
                         isIrrelevant ? "REJECTED" : "APPROVED",
-                        isIrrelevant ? "Filtered by LLM as semantically irrelevant to request" : "Validated as semantically relevant"
+                        isIrrelevant ? "Filtered by LLM as semantically irrelevant to request" : (godModeFilters?.disableSemantic ? "Bypassed via God Mode" : "Validated as semantically relevant")
                     );
                 });
 
@@ -2623,14 +2714,32 @@ ${understandingPlan.intent !== "GREETING" && understandingPlan.intelligenceData?
         data.append(dataPayload);
 
         const { selectFewShots } = await import("@/lib/fewShotLibrary");
-        const fewShots = await selectFewShots(
-            message,
-            understandingPlan.intent || "SHOPPING",
-            activePersona.primary_language,
-            activePersona.tone,
-            understandingPlan.intelligenceData?.recommendationConfidence || 1.0,
-            history || []
-        );
+        
+        // Only inject few-shots if the active persona's primary language is NOT English,
+        // AND there is some localized slang detected in the message or active persona history,
+        // or the message contains common Sri Lankan / local chat markers.
+        const isLocalized = activePersona.primary_language !== "English" && 
+                            ((activePersona.detected_slang && activePersona.detected_slang.length > 0) || 
+                             message.toLowerCase().includes("machan") || 
+                             message.toLowerCase().includes("macha") || 
+                             message.toLowerCase().includes("ado") || 
+                             message.toLowerCase().includes("aiyo") ||
+                             message.toLowerCase().includes("ane") ||
+                             message.toLowerCase().includes("patta") ||
+                             message.toLowerCase().includes("ela") ||
+                             message.toLowerCase().includes("hari"));
+
+        let fewShots: any[] = [];
+        if (isLocalized) {
+            fewShots = await selectFewShots(
+                message,
+                understandingPlan.intent || "SHOPPING",
+                activePersona.primary_language,
+                activePersona.tone,
+                understandingPlan.intelligenceData?.recommendationConfidence || 1.0,
+                history || []
+            );
+        }
 
         const fewShotMessages: any[] = [];
         for (const example of fewShots) {

@@ -1,6 +1,6 @@
 export interface TelemetryEvent {
     engine: string;
-    status: "RUNNING" | "COMPLETED" | "WAITING" | "ERROR";
+    status: "RUNNING" | "COMPLETED" | "WAITING" | "ERROR" | "SKIPPED";
     durationMs?: number;
     timestamp: number; // millisecond offset from request start
     details?: any;
@@ -16,6 +16,7 @@ export interface ProductStage {
 export interface ProductLifecycle {
     productId: string;
     productName: string;
+    url?: string;
     stages: ProductStage[];
 }
 

@@ -132,6 +132,11 @@ export interface ExtractionResult {
     general_note?: string;
     confidence: number;
   };
+  new_slang_detected?: {
+    slang_word: string;
+    standard_english: string;
+    category: "RELATIONSHIP" | "PRODUCT" | "OCCASION" | "OTHER";
+  }[];
 }
 
 export interface IntelligenceOutput {
@@ -174,6 +179,11 @@ export interface IntelligenceOutput {
     general_note?: string;
     confidence: number;
   };
+  new_slang_detected?: {
+    slang_word: string;
+    standard_english: string;
+    category: "RELATIONSHIP" | "PRODUCT" | "OCCASION" | "OTHER";
+  }[];
 
   // Observability
   traces: IntelligenceTrace[];

@@ -86,8 +86,8 @@ export function rankProducts(
 
         // Apply Child Context Filter boosts and penalties
         if (prod.childPenalty) {
-            recipientScore *= 0.05; // Extremely heavy penalty to trigger common sense validation failure
-            occasionScore *= 0.05;
+            recipientScore *= 0.5; // Softer penalty to prevent complete validation collapse
+            occasionScore *= 0.5;
         }
         if (prod.childBoost) {
             recipientScore = Math.min(1.0, recipientScore + 0.3);

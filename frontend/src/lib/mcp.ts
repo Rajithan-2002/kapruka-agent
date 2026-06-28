@@ -79,26 +79,38 @@ export async function mcpSearchProducts(query: string, limit = 40, inStockOnly =
             content?: Array<{ text?: string }>;
         };
         if (res.structuredContent?.result) {
+            const text = res.structuredContent.result;
+            if (text.startsWith("Error")) {
+                console.error("MCP tool returned an error:", text);
+                return [];
+            }
             try {
-                const parsed = JSON.parse(res.structuredContent.result);
+                const parsed = JSON.parse(text);
                 return (parsed.results || []) as MCPProduct[];
             } catch (e) {
-                if (res.structuredContent.result.toLowerCase().includes("no product")) {
+                if (text.toLowerCase().includes("no product")) {
                     return [];
                 }
-                throw e;
+                console.error("Failed to parse MCP response:", text.substring(0, 100));
+                return [];
             }
         }
 
         if (res.content && res.content[0]?.text) {
+            const text = res.content[0].text;
+            if (text.startsWith("Error")) {
+                console.error("MCP tool returned an error:", text);
+                return [];
+            }
             try {
-                const parsed = JSON.parse(res.content[0].text);
+                const parsed = JSON.parse(text);
                 return (parsed.results || []) as MCPProduct[];
             } catch (e) {
-                if (res.content[0].text.toLowerCase().includes("no product")) {
+                if (text.toLowerCase().includes("no product")) {
                     return [];
                 }
-                throw e;
+                console.error("Failed to parse MCP response:", text.substring(0, 100));
+                return [];
             }
         }
 

@@ -129,7 +129,7 @@ function checkCategoryIntelligence(name: string, category: string, occasion: str
         if (category.includes("women") || category.includes("female") || category.includes("lingerie") || category.includes("makeup") || name.includes("facial kit")) {
             return "BLOCK";
         }
-        if (name.includes("flower") || name.includes("romantic") || name.includes("couple")) {
+        if (name.includes("flower") || name.includes("romantic") || name.includes("couple") || name.includes("friend") || name.includes("bff")) {
             return "PENALIZE";
         }
         return "ALLOW";
@@ -139,7 +139,7 @@ function checkCategoryIntelligence(name: string, category: string, occasion: str
         if (category.includes("men") || category.includes("male") || category.includes("shaving") || name.includes("beard")) {
             return "BLOCK";
         }
-        if (category.includes("gaming") || category.includes("tool") || category.includes("hardware")) {
+        if (category.includes("gaming") || category.includes("tool") || category.includes("hardware") || name.includes("romantic") || name.includes("couple") || name.includes("sexy") || name.includes("friend") || name.includes("bff")) {
             return "PENALIZE";
         }
         return "ALLOW";

@@ -50,8 +50,23 @@ export async function POST(request: Request) {
                 const { AffinityEngine } = await import("@/lib/intelligence/recommendation/affinityEngine");
                 const affinityAction = feedbackType === "RELEVANT" ? "CLICK" : "EXPLICIT_DISLIKE";
                 await AffinityEngine.recordInteraction(effectiveUserId, "category", context.category, affinityAction);
+
+                // Log user rating clicks / feedback telemetry to learning_events
+                const { LearningEngine } = await import("@/lib/intelligence/learning/learningEngine");
+                const eventType = feedbackType === "RELEVANT" ? "POSITIVE_SIGNAL" : "NEGATIVE_SIGNAL";
+                await LearningEngine.recordFeedback(
+                    effectiveUserId,
+                    eventType,
+                    {
+                        productId,
+                        contextKey,
+                        recipient: context.recipient || "unknown",
+                        occasion: context.occasion || "unknown",
+                        category: context.category
+                    }
+                );
             } catch (err) {
-                console.warn("[Feedback] AffinityEngine update failed (non-critical):", err);
+                console.warn("[Feedback] AffinityEngine/LearningEngine update failed (non-critical):", err);
             }
         }
 
