@@ -649,6 +649,9 @@ export default function ChatWindow() {
     setIsTyping(true);
     setTypingText(getLoadingPhrase(text));
 
+    const abortController = new AbortController();
+    const timeoutId = setTimeout(() => abortController.abort(), 90000); // 90s timeout
+
     try {
       const chatHistory = messages
         .filter(msg => msg.role === "user" || msg.role === "assistant")
@@ -657,6 +660,7 @@ export default function ChatWindow() {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: abortController.signal,
         body: JSON.stringify({
           message: text,
           history: chatHistory,
@@ -776,7 +780,9 @@ export default function ChatWindow() {
       
       // Auto-refresh memory and relationships after successful completion
       await loadUserRelationships();
-    } catch (error) {
+      clearTimeout(timeoutId);
+    } catch (error: any) {
+      clearTimeout(timeoutId);
       console.error(error);
       setIsTyping(false);
       setMessages(prev => [
@@ -784,7 +790,9 @@ export default function ChatWindow() {
         {
           id: `kappy-${Date.now()}`,
           role: "assistant",
-          content: "Machan, sorry, I couldn't connect to my brain. Let's try again in a bit! 😕"
+          content: error?.name === 'AbortError' 
+            ? "Machan, the connection timed out. Could you check your internet and try again? 📡" 
+            : "Machan, sorry, I couldn't connect to my brain. Let's try again in a bit! 😕"
         }
       ]);
     }

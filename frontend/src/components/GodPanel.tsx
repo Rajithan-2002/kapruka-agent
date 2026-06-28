@@ -944,7 +944,7 @@ export default function GodPanel({ traceId, onClose, relationships = [], prefere
                                                     <span className="text-slate-400">+{stagesRun[stagesRun.length - 1]?.timestamp || 0}ms</span>
                                                 </div>
                                                 <a 
-                                                    href={`https://www.kapruka.com/buyonline/${p.productId}`}
+                                                    href={`https://www.kapruka.com/buyonline/${(p.productName || "product").toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')}/kid/${p.productId?.toLowerCase() || ""}`}
                                                     target="_blank" 
                                                     rel="noopener noreferrer" 
                                                     className="text-cyan-400 hover:text-cyan-300 font-bold hover:underline flex items-center gap-0.5 text-[10px] transition-colors"

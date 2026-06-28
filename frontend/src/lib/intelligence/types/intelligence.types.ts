@@ -150,6 +150,7 @@ export interface IntelligenceOutput {
   interaction_mode?: "DISCOVERY" | "RECOMMENDATION" | "REFINEMENT";
   action?: "SEARCH" | "SHOW_MORE" | "RECALL_PREVIOUS_RESULTS";
   search_sufficiency_score?: number;
+  searchMode?: "EXPLORATORY" | "PRECISE";
   
   // The accumulated state
   intent?: IntentType;

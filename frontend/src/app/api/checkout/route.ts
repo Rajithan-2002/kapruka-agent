@@ -7,45 +7,27 @@ export async function POST(request: Request) {
         const payload = await request.json();
         console.log("[Checkout API] Received checkout payload:", JSON.stringify(payload, null, 2));
 
-        // Intercept mock products for seamless UI demo
-        const hasMockIds = payload.cart?.some((item: any) => 
-            ['roses', 'chocs', 'card'].includes(item.product_id) || 
-            item.product_id.startsWith('mock-') ||
-            item.product_id.startsWith('landing-')
-        );
-
-        if (hasMockIds) {
-            console.log("[Checkout API] Mock products detected. Returning mock checkout URL.");
-            return NextResponse.json({
-                success: true,
-                checkout_url: "https://www.kapruka.com/",
-                order_ref: `DEMO-${Math.floor(Math.random() * 100000)}`,
-                summary: {
-                    items_total: 4500,
-                    delivery_fee: 300,
-                    grand_total: 4800
-                }
-            });
-        }
-
-        // Create order via MCP
+        // Create order via MCP with automatic retry for rate limits
         let result;
-        try {
-            result = await mcpCreateOrder(payload);
-            if (!result || !result.checkout_url) {
-                throw new Error("Missing checkout_url in MCP response");
-            }
-        } catch (mcpError) {
-            console.error("[Checkout API] Failed to create order via MCP. Falling back to mock checkout.", mcpError);
-            result = {
-                checkout_url: "https://www.kapruka.com/",
-                order_ref: `DEMO-${Math.floor(Math.random() * 100000)}`,
-                summary: {
-                    items_total: payload.cart?.reduce((acc: any, item: any) => acc + (item.price || 0) * (item.quantity || 1), 0) || 4500,
-                    delivery_fee: 300,
-                    grand_total: (payload.cart?.reduce((acc: any, item: any) => acc + (item.price || 0) * (item.quantity || 1), 0) || 4500) + 300
+        let maxRetries = 3;
+        let attempt = 0;
+        
+        while (attempt < maxRetries) {
+            try {
+                result = await mcpCreateOrder(payload);
+                if (!result || !result.checkout_url) {
+                    throw new Error("Missing checkout_url in MCP response");
                 }
-            };
+                break; // Success, exit retry loop
+            } catch (err: any) {
+                if (err.message?.includes("Rate limit") && attempt < maxRetries - 1) {
+                    console.log(`[Checkout API] Rate limit hit. Retrying attempt ${attempt + 1} of ${maxRetries}...`);
+                    await new Promise(r => setTimeout(r, 2000 * (attempt + 1))); // Exponential backoff: 2s, 4s
+                    attempt++;
+                } else {
+                    throw err; // Not a rate limit or out of retries
+                }
+            }
         }
 
         console.log("[Checkout API] MCP Order created successfully:", result);

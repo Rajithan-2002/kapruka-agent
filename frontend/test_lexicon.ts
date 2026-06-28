@@ -1,4 +1,5 @@
-process.env.OPENAI_API_KEY = "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";
+import * as dotenv from "dotenv";
+dotenv.config({ path: ".env.local" });
 
 async function runTest() {
     const { IntelligenceOrchestrator } = await import("./src/lib/intelligence/orchestrator/intelligenceOrchestrator");

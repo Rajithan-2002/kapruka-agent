@@ -50,6 +50,7 @@ export class IntelligenceOrchestrator {
         price_refinement: extraction.price_refinement,
         extracted_memory: extraction.extracted_memory,
         new_slang_detected: extraction.new_slang_detected,
+        searchMode: confidenceGate.result.searchMode,
         traces: this.tracer.getTraces()
       };
     }
@@ -92,6 +93,7 @@ export class IntelligenceOrchestrator {
       price_refinement: extraction.price_refinement,
       extracted_memory: extraction.extracted_memory,
       new_slang_detected: extraction.new_slang_detected,
+      searchMode: confidenceGate.result.searchMode,
       relationship,
       plan,
       traces: this.tracer.getTraces()

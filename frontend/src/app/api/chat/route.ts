@@ -717,7 +717,8 @@ async function processPostRequest(
              understandingPlan.occasion = { type: occName, confidence: 1.0 };
              if (understandingPlan.intelligenceData) {
                  understandingPlan.intelligenceData.intent = "GIFTING";
-                 understandingPlan.intelligenceData.readyForRecommendation = false;
+                 understandingPlan.intelligenceData.readyForRecommendation = true;
+                 understandingPlan.intelligenceData.searchMode = "EXPLORATORY";
                  understandingPlan.intelligenceData.situation = {
                      ...understandingPlan.intelligenceData.situation,
                      occasion: occName
@@ -1363,7 +1364,8 @@ async function processPostRequest(
                         plan.mcp_tool_needed = "kapruka_search_products";
                     }
                 } else {
-                    if ((understandingPlan.intent === "PREFERENCE_CORRECTION" || understandingPlan.intent === "PRICE_REFINEMENT") && (!understandingPlan.product_type || understandingPlan.product_type === "UNKNOWN" || understandingPlan.product_type === message)) {
+                    const isMissingContext = !understandingPlan.intelligenceData?.readyForRecommendation && (!understandingPlan.product_type || understandingPlan.product_type === "UNKNOWN");
+                    if ((understandingPlan.intent === "PREFERENCE_CORRECTION" || understandingPlan.intent === "PRICE_REFINEMENT") && isMissingContext) {
                         plan.mcp_tool_needed = null;
                         toolResults = {
                             clarification_needed: true,
@@ -1374,7 +1376,12 @@ async function processPostRequest(
                     } else {
                         plan.mcp_tool_needed = "kapruka_search_products";
                         if (!plan.mcp_search_query) {
-                            plan.mcp_search_query = (understandingPlan.product_type && understandingPlan.product_type !== "UNKNOWN") ? understandingPlan.product_type : message;
+                            const components = [];
+                            if (understandingPlan.product_type && understandingPlan.product_type !== "UNKNOWN") components.push(understandingPlan.product_type);
+                            if (understandingPlan.situation?.recipient && understandingPlan.situation.recipient !== "UNKNOWN") components.push(understandingPlan.situation.recipient);
+                            if (understandingPlan.situation?.occasion && understandingPlan.situation.occasion !== "UNKNOWN") components.push(understandingPlan.situation.occasion);
+                            
+                            plan.mcp_search_query = components.length > 0 ? components.join(" ") : message;
                         }
                     }
                 }
@@ -1388,7 +1395,14 @@ async function processPostRequest(
                 GodTelemetryService.emit("Retrieval Engine", "RUNNING", { query: plan.mcp_search_query });
 
                 const translatedQuery = await translateSearchQuery(plan.mcp_search_query || "");
-                let rawProducts = await mcpSearchProducts(translatedQuery, 100);
+                
+                console.log("\n================ [QUERY TRANSLATION PIPELINE] ================");
+                console.log(`1. Raw Input:      "${message}"`);
+                console.log(`2. LLM Extraction: "${plan.mcp_search_query || ""}"`);
+                console.log(`3. Final MCP Query: "${translatedQuery}"`);
+                console.log("==============================================================\n");
+
+                let rawProducts = await mcpSearchProducts(translatedQuery, 50);
                 
                 // Fallback items if MCP is offline / empty
                 if (!rawProducts || rawProducts.length === 0) {
@@ -1738,17 +1752,31 @@ async function processPostRequest(
                 // --- STAGE 3: SEMANTIC GARBAGE FILTER ---
                 const { runSemanticIrrelevanceFilter } = await import("@/lib/intelligence/recommendation/semanticFilter");
                 let irrelevantIds: string[] = [];
+                let semanticMetrics: any = null;
                 if (godModeFilters?.disableSemantic) {
                     console.log("[God Mode] Semantic Filter bypassed by toggle.");
                     GodTelemetryService.emit("Semantic Filter", "COMPLETED", { count: rankedCandidates.length });
                 } else {
                     GodTelemetryService.emit("Semantic Filter", "RUNNING", { count: rankedCandidates.length });
-                    irrelevantIds = await runSemanticIrrelevanceFilter(
+                    
+                    let specificityScore = 0;
+                    if (understandingPlan.product_type && understandingPlan.product_type !== "UNKNOWN") specificityScore += 0.5;
+                    if (understandingPlan.situation?.occasion && understandingPlan.situation.occasion !== "UNKNOWN") specificityScore += 0.3;
+                    if (understandingPlan.situation?.recipient && understandingPlan.situation.recipient !== "UNKNOWN") specificityScore += 0.2;
+                    
+                    const searchMode = understandingPlan.searchMode || "PRECISE";
+
+                    const filterResult = await runSemanticIrrelevanceFilter(
                         plan.shopping_stage || plan.mcp_search_query || "",
                         understandingPlan.mapped_category || "UNKNOWN",
-                        rankedCandidates.map(c => ({ id: c.productId, name: c.productData.name, category: c.productData.category }))
+                        rankedCandidates.map(c => ({ id: c.productId, name: c.productData.name, category: c.productData.category })),
+                        searchMode,
+                        specificityScore
                     );
-                    GodTelemetryService.emit("Semantic Filter", "COMPLETED", { irrelevantCount: irrelevantIds.length });
+                    irrelevantIds = filterResult.irrelevantIds;
+                    semanticMetrics = filterResult.metrics;
+                    console.log("[Semantic Recall Metrics]", semanticMetrics);
+                    GodTelemetryService.emit("Semantic Filter", "COMPLETED", { irrelevantCount: irrelevantIds.length, metrics: semanticMetrics });
                 }
 
                 rankedCandidates.forEach((c: any) => {
@@ -1766,7 +1794,7 @@ async function processPostRequest(
                 semanticRemovedCount = rankedCandidates.length - finalSemanticRanked.length;
 
                 ReplayService.recordStep("Semantic Guardrail", 
-                    { inputCount: rankedCandidates.length, irrelevantIds }, 
+                    { inputCount: rankedCandidates.length, irrelevantIds, metrics: semanticMetrics }, 
                     { finalCount: finalSemanticRanked.length, finalProducts: finalSemanticRanked.map(c => ({ id: c.productId, name: c.productData.name, score: c.finalScore })) }
                 );
                 // ----------------------------------------
