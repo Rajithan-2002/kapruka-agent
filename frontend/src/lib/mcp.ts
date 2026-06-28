@@ -320,12 +320,19 @@ export async function mcpCreateOrder(params: any): Promise<Record<string, any> |
             structuredContent?: { result?: string };
             content?: Array<{ text?: string }>;
         };
+        const parseResult = (text: string) => {
+            if (text.startsWith("Error")) {
+                throw new Error(text);
+            }
+            return JSON.parse(text) as Record<string, any>;
+        };
+
         if (res.structuredContent?.result) {
-            return JSON.parse(res.structuredContent.result) as Record<string, any>;
+            return parseResult(res.structuredContent.result);
         }
 
         if (res.content && res.content[0]?.text) {
-            return JSON.parse(res.content[0].text) as Record<string, any>;
+            return parseResult(res.content[0].text);
         }
 
         return null;

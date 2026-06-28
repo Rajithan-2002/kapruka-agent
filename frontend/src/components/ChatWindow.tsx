@@ -839,23 +839,23 @@ export default function ChatWindow() {
       setIsOptimizing(false);
       if (builderBudget <= 3500) {
         setBuilderItems([
-          { id: "roses", name: "Single Red Rose (Eco Pack)", price: 600, image: "https://images.unsplash.com/photo-1561181286-d3fee7d55364?w=200&q=80", selected: true },
-          { id: "chocs", name: "Cadbury Dairy Milk Tray", price: 900, image: "https://images.unsplash.com/photo-1549007994-cb92ca88806f?w=200&q=80", selected: true },
-          { id: "card", name: "Classic Greeting Card", price: 300, image: "https://images.unsplash.com/photo-1512909006721-3d6018887383?w=200&q=80", selected: true }
+          { id: "FLOWERS00T2010", name: "Elegant 30 Red Roses Premium Bouquet", price: 12800, image: "https://images.unsplash.com/photo-1561181286-d3fee7d55364?w=200&q=80", selected: true },
+          { id: "EF_PC_CHOC0V571POD00076", name: "Glitter Hearts Chocolate Box", price: 3500, image: "https://images.unsplash.com/photo-1549007994-cb92ca88806f?w=200&q=80", selected: true },
+          { id: "EF_PC_GREE0V699P00080", name: "Happy Father`s Day Handmade Greeting Card", price: 330, image: "https://images.unsplash.com/photo-1512909006721-3d6018887383?w=200&q=80", selected: true }
         ]);
         setOptimizationReason("Swapped luxury chocolates for Cadbury & downsized rose arrangement to perfectly fit LKR 3,500 budget.");
       } else if (builderBudget <= 6000) {
         setBuilderItems([
-          { id: "roses", name: "Premium Red Roses Bouquet", price: 2200, image: "https://images.unsplash.com/photo-1561181286-d3fee7d55364?w=200&q=80", selected: true },
-          { id: "chocs", name: "Ferrero Rocher Box (16 Pcs)", price: 1800, image: "https://images.unsplash.com/photo-1549007994-cb92ca88806f?w=200&q=80", selected: true },
-          { id: "card", name: "Custom Calligraphy Greeting Card", price: 500, image: "https://images.unsplash.com/photo-1512909006721-3d6018887383?w=200&q=80", selected: true },
+          { id: "FLOWERS00T2010", name: "Elegant 30 Red Roses Premium Bouquet", price: 12800, image: "https://images.unsplash.com/photo-1561181286-d3fee7d55364?w=200&q=80", selected: true },
+          { id: "EF_PC_CHOC0V571POD00076", name: "Glitter Hearts Chocolate Box", price: 3500, image: "https://images.unsplash.com/photo-1549007994-cb92ca88806f?w=200&q=80", selected: true },
+          { id: "EF_PC_GREE0V699P00080", name: "Happy Father`s Day Handmade Greeting Card", price: 330, image: "https://images.unsplash.com/photo-1512909006721-3d6018887383?w=200&q=80", selected: true }
         ]);
         setOptimizationReason("Optimal arrangement matches LKR 5,000 budget with 16 Ferrero piece box.");
       } else {
         setBuilderItems([
-          { id: "roses", name: "Premium 24 Roses Arrangement", price: 4500, image: "https://images.unsplash.com/photo-1561181286-d3fee7d55364?w=200&q=80", selected: true },
-          { id: "chocs", name: "Ferrero Rocher Gold Luxury Tin (24 Pcs)", price: 3200, image: "https://images.unsplash.com/photo-1549007994-cb92ca88806f?w=200&q=80", selected: true },
-          { id: "card", name: "Deluxe Pop-up Keepsake Greeting Card", price: 800, image: "https://images.unsplash.com/photo-1512909006721-3d6018887383?w=200&q=80", selected: true },
+          { id: "FLOWERS00T1875", name: "Rose Elegance Display Vase With 30 Red Roses", price: 18000, image: "https://images.unsplash.com/photo-1561181286-d3fee7d55364?w=200&q=80", selected: true },
+          { id: "EF_PC_CHOC0V571POD00076", name: "Glitter Hearts Chocolate Box", price: 3500, image: "https://images.unsplash.com/photo-1549007994-cb92ca88806f?w=200&q=80", selected: true },
+          { id: "EF_PC_GIFTV0V2587P00004", name: "Arienti Gift Card Rs 10000", price: 10000, image: "https://images.unsplash.com/photo-1512909006721-3d6018887383?w=200&q=80", selected: true }
         ]);
         setOptimizationReason("Upgraded package components to premium tiers and added pop-up gift card option.");
       }
@@ -1556,7 +1556,7 @@ export default function ChatWindow() {
                     setIsCheckoutOpen(true);
                     setCheckoutStep("summary");
                   }}
-                  className="w-full flex items-center justify-center gap-2 py-3 bg-gradient-to-r from-amber-500 to-rose-500 hover:from-amber-600 hover:to-rose-600 active:scale-95 disabled:from-slate-200 text-white font-extrabold text-sm rounded-2xl shadow-md transition-all cursor-pointer"
+                  className="w-full flex items-center justify-center gap-2 py-3 bg-gradient-to-r from-amber-500 to-rose-500 hover:from-amber-600 hover:to-rose-600 active:scale-95 disabled:from-slate-200 disabled:to-slate-200 disabled:text-slate-400 disabled:shadow-none disabled:cursor-not-allowed text-white font-extrabold text-sm rounded-2xl shadow-md transition-all cursor-pointer"
                 >
                   <CreditCard className="w-4 h-4" />
                   Proceed to Secure Checkout
