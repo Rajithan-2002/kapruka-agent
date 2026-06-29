@@ -7,13 +7,14 @@ import { Product } from "./ChatMessage";
 interface ProductCardProps {
     product: Product;
     isMobile?: boolean;
+    compact?: boolean;
     onProductClick?: (productId: string) => void;
     onAddToBundle?: (product: Product) => void;
     userId?: string;
     sessionId?: string | null;
 }
 
-export default function ProductCard({ product, isMobile = false, onProductClick, onAddToBundle, userId, sessionId }: ProductCardProps) {
+export default function ProductCard({ product, isMobile = false, compact = false, onProductClick, onAddToBundle, userId, sessionId }: ProductCardProps) {
     const [isExpanded, setIsExpanded] = useState(false);
     const [feedbackSubmitted, setFeedbackSubmitted] = useState<"RELEVANT" | "NOT_RELEVANT" | null>(null);
 
@@ -100,7 +101,7 @@ export default function ProductCard({ product, isMobile = false, onProductClick,
 
             {/* Product Image */}
             <div 
-                className="h-44 w-full bg-slate-50 overflow-hidden relative group cursor-pointer"
+                className={`${compact ? "h-32" : "h-44"} w-full bg-slate-50 overflow-hidden relative group cursor-pointer`}
                 onClick={() => onProductClick && onProductClick(product.id)}
             >
                 <img
@@ -125,10 +126,10 @@ export default function ProductCard({ product, isMobile = false, onProductClick,
             </div>
 
             {/* Product Info */}
-            <div className="flex-1 p-4 flex flex-col justify-between">
+            <div className={`flex-1 ${compact ? "p-3" : "p-4"} flex flex-col justify-between`}>
                 <div>
                     <h4 
-                        className={`font-bold text-slate-800 line-clamp-2 mb-1.5 leading-snug cursor-pointer hover:text-indigo-600 transition-colors ${isMobile ? "text-sm" : "text-sm md:text-base"}`}
+                        className={`font-bold text-slate-800 line-clamp-2 mb-1.5 leading-snug cursor-pointer hover:text-indigo-600 transition-colors ${compact ? "text-xs" : isMobile ? "text-sm" : "text-sm md:text-base"}`}
                         onClick={() => onProductClick && onProductClick(product.id)}
                     >
                         {product.name}
@@ -148,7 +149,7 @@ export default function ProductCard({ product, isMobile = false, onProductClick,
                         </div>
                     )}
 
-                    <p className="text-lg font-black text-rose-600 mb-3">
+                    <p className={`${compact ? "text-sm" : "text-lg"} font-black text-rose-600 mb-3`}>
                         LKR {product.price.toLocaleString()}
                     </p>
 

@@ -1766,7 +1766,7 @@ export default function ChatWindow() {
 
               {/* 5. Product Catalog Side Panel (Desktop only) */}
               {!isMobileView && activeTab === "chat" && activeProducts.length > 0 && (
-                  <aside className="w-[350px] lg:w-[400px] bg-white border-l border-slate-200/60 flex flex-col h-full z-10 shadow-[-4px_0_24px_rgba(0,0,0,0.02)]">
+                  <aside className="w-[450px] lg:w-[500px] bg-white border-l border-slate-200/60 flex flex-col h-full z-10 shadow-[-4px_0_24px_rgba(0,0,0,0.02)]">
                       <div className="flex items-center gap-2 px-5 py-4 bg-slate-50/80 border-b border-slate-100 backdrop-blur-md shrink-0">
                           <span className="p-1.5 bg-gradient-to-tr from-violet-500 to-indigo-500 text-white rounded-lg shadow-sm">
                               <ShoppingBag className="w-4 h-4" />
@@ -1776,18 +1776,21 @@ export default function ChatWindow() {
                               <p className="text-[10px] text-slate-500 font-bold">Kappy's latest recommendations</p>
                           </div>
                       </div>
-                      <div className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin bg-slate-50">
-                          {activeProducts.map(product => (
-                              <ProductCard 
-                                  key={product.id} 
-                                  product={product} 
-                                  isMobile={false} 
-                                  onProductClick={handleOpenProductModal} 
-                                  onAddToBundle={addToBundle} 
-                                  userId={user?.id} 
-                                  sessionId={activeConversationId} 
-                              />
-                          ))}
+                      <div className="flex-1 overflow-y-auto p-4 scrollbar-thin bg-slate-50">
+                          <div className="grid grid-cols-2 gap-3">
+                              {activeProducts.map(product => (
+                                  <ProductCard 
+                                      key={product.id} 
+                                      product={product} 
+                                      isMobile={false} 
+                                      compact={true}
+                                      onProductClick={handleOpenProductModal} 
+                                      onAddToBundle={addToBundle} 
+                                      userId={user?.id} 
+                                      sessionId={activeConversationId} 
+                                  />
+                              ))}
+                          </div>
                       </div>
                   </aside>
               )}
