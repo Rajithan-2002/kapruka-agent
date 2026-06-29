@@ -209,6 +209,10 @@ export default function ChatWindow() {
         method: "DELETE"
       });
       if (res.ok) {
+        if (user?.email === "guest@kapruka.com") {
+          setRelationships(prev => prev.filter(r => r.id !== relId));
+          setPreferences(prev => prev.filter(p => p.relationship_id !== relId));
+        }
         await loadUserRelationships();
       }
     } catch (e) {
@@ -240,6 +244,9 @@ export default function ChatWindow() {
         })
       });
       if (res.ok) {
+        if (user?.email === "guest@kapruka.com") {
+          setRelationships(prev => prev.map(r => r.id === relId ? { ...r, nickname: editNickname, relationship_type: editRelationshipType, birthday: editBirthday, notes: editNotes } : r));
+        }
         setEditingRelationshipId(null);
         await loadUserRelationships();
       }
@@ -254,6 +261,9 @@ export default function ChatWindow() {
         method: "DELETE"
       });
       if (res.ok) {
+        if (user?.email === "guest@kapruka.com") {
+          setPreferences(prev => prev.filter(p => p.id !== prefId));
+        }
         await loadUserRelationships();
       }
     } catch (e) {
@@ -277,6 +287,10 @@ export default function ChatWindow() {
       });
       if (res.ok) {
         setNewInterestText(prev => ({ ...prev, [relId]: "" }));
+        const data = await res.json();
+        if (user?.email === "guest@kapruka.com" && data.preference) {
+          setPreferences(prev => [data.preference, ...prev]);
+        }
         await loadUserRelationships();
       }
     } catch (e) {
@@ -427,6 +441,11 @@ export default function ChatWindow() {
   };
 
   const loadUserRelationships = async () => {
+    if (user?.email === "guest@kapruka.com") {
+      setIsLoadingRelationships(false);
+      loadLandingProducts();
+      return;
+    }
     setIsLoadingRelationships(true);
     try {
       const res = await fetch("/api/relationships");
@@ -460,6 +479,9 @@ export default function ChatWindow() {
       });
       const data = await res.json();
       if (data.relationship) {
+        if (user?.email === "guest@kapruka.com") {
+          setRelationships(prev => [data.relationship, ...prev]);
+        }
         await loadUserRelationships();
         setNewPersonName("");
         setNewPersonBirthday("");
@@ -1199,21 +1221,27 @@ export default function ChatWindow() {
           
           {/* HOME TAB VIEW */}
           {activeTab === "home" && (
-            <div className="p-5 max-w-lg mx-auto space-y-6 animate-fade-in">
+            <div className="p-6 md:p-10 lg:p-14 max-w-5xl mx-auto space-y-12 animate-fade-in w-full">
               {/* Header Profile Greeting */}
               <div className="pt-2">
-                <h2 className="text-xl font-bold text-slate-400">👋 Hi {user?.email ? user.email.split('@')[0] : "Guest"}</h2>
-                <h1 className="text-2xl font-black text-slate-900 tracking-tight leading-tight mt-1">What are we shopping for today?</h1>
+                <h1 className="text-3xl md:text-4xl font-black text-slate-900 tracking-tight leading-tight">Good morning, {user?.email ? user.email.split('@')[0] : "Guest"}! 👋</h1>
+                <p className="text-sm md:text-base text-slate-500 font-medium mt-2">How can I help you find the perfect things today?</p>
               </div>
 
               {/* Single Hero CTA Input */}
-              <div className="relative">
-                <div className="flex items-center gap-2 p-1.5 bg-white border border-slate-200/80 rounded-2xl shadow-sm focus-within:border-violet-500 focus-within:ring-2 focus-within:ring-violet-200/50 transition-all duration-300">
-                  <div className="flex-1 px-3 py-2.5">
+              <div className="relative w-full max-w-3xl">
+                <div className="flex items-center gap-2 p-2 bg-white border border-slate-200/80 rounded-full shadow-[0_8px_30px_rgb(0,0,0,0.04)] focus-within:border-violet-500 focus-within:ring-4 focus-within:ring-violet-500/10 transition-all duration-300">
+                  <button
+                    onClick={handleMicClick}
+                    className={`ml-2 p-3 rounded-full transition-all ${isVoiceSimulating ? "bg-rose-500 text-white animate-pulse" : "bg-slate-50 hover:bg-slate-100 text-slate-400"}`}
+                  >
+                    <Mic className="w-5 h-5" />
+                  </button>
+                  <div className="flex-1 px-2 py-3">
                     <input
                       type="text"
-                      placeholder="Describe your situation... (e.g. birthday gift)"
-                      className="w-full bg-transparent text-slate-800 placeholder-slate-400 focus:outline-none text-sm md:text-base font-semibold"
+                      placeholder="Ask me anything about gifts, products, deals..."
+                      className="w-full bg-transparent text-slate-700 placeholder-slate-400 focus:outline-none text-base md:text-lg font-medium"
                       value={voiceInputText}
                       onChange={(e) => setVoiceInputText(e.target.value)}
                       onKeyDown={(e) => {
@@ -1225,19 +1253,13 @@ export default function ChatWindow() {
                     />
                   </div>
                   <button
-                    onClick={handleMicClick}
-                    className={`p-3 rounded-xl transition-all ${isVoiceSimulating ? "bg-rose-500 text-white animate-pulse" : "bg-slate-100 hover:bg-slate-200 text-slate-500"}`}
-                  >
-                    <Mic className="w-5 h-5" />
-                  </button>
-                  <button
                     onClick={() => {
                       if (voiceInputText.trim()) {
                         startNewChatAndSendMessage(voiceInputText);
                         setVoiceInputText("");
                       }
                     }}
-                    className="p-3 bg-gradient-to-r from-amber-500 to-rose-500 hover:from-amber-600 hover:to-rose-600 text-white rounded-xl shadow-md transition-all active:scale-95"
+                    className="mr-1 p-3.5 bg-violet-600 hover:bg-violet-700 text-white rounded-full shadow-md transition-all active:scale-95"
                   >
                     <ArrowRight className="w-5 h-5" />
                   </button>
@@ -1245,144 +1267,128 @@ export default function ChatWindow() {
 
                 {/* Simulated Voice wave overlay */}
                 {isVoiceSimulating && (
-                  <div className="absolute inset-0 bg-white/95 flex items-center justify-center gap-3 rounded-2xl px-4 border border-rose-400 animate-fade-in">
+                  <div className="absolute inset-0 bg-white/95 flex items-center justify-center gap-3 rounded-full px-4 border border-rose-400 animate-fade-in z-10">
                     <div className="flex gap-1 items-center justify-center">
                       <span className="w-1.5 h-6 bg-rose-500 rounded-full animate-bounce [animation-delay:-0.4s]" />
                       <span className="w-1.5 h-9 bg-rose-500 rounded-full animate-bounce [animation-delay:-0.2s]" />
                       <span className="w-1.5 h-7 bg-rose-500 rounded-full animate-bounce [animation-delay:-0.3s]" />
                       <span className="w-1.5 h-4 bg-rose-500 rounded-full animate-bounce" />
                     </div>
-                    <span className="text-xs text-rose-600 font-extrabold italic animate-pulse">
+                    <span className="text-xs text-rose-600 font-extrabold italic animate-pulse truncate max-w-[200px]">
                       Dictating: "{voiceInputText || "..."}"
                     </span>
                   </div>
                 )}
-              </div>
 
-              {/* Same-Day Countdown */}
-              {sameDayTimeLeft && (
-                <div className="p-3.5 bg-gradient-to-r from-emerald-50 to-teal-50/30 border border-emerald-100/80 rounded-2xl flex items-center justify-between shadow-sm">
-                  <div className="flex items-center gap-2">
-                    <span className="flex h-2 w-2 relative">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                    </span>
-                    <span className="text-xs text-emerald-800 font-bold">{sameDayTimeLeft}</span>
-                  </div>
-                  <span className="text-[10px] bg-emerald-500 text-white font-extrabold px-1.5 py-0.5 rounded uppercase">Fast 🚚</span>
-                </div>
-              )}
-
-              {/* Upcoming Events Countdown Pills */}
-              {relationships.some(r => getDaysUntilBirthday(r.birthday) !== null) && (
-                <div className="space-y-2">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Upcoming events</span>
-                  <div className="flex flex-wrap gap-2">
-                    {relationships
-                      .map(r => ({ ...r, daysRemaining: getDaysUntilBirthday(r.birthday) }))
-                      .filter(r => r.daysRemaining !== null)
-                      .sort((a, b) => (a.daysRemaining || 0) - (b.daysRemaining || 0))
-                      .slice(0, 3)
-                      .map(r => (
-                        <span
-                          key={r.id}
-                          onClick={() => {
-                            startNewChatAndSendMessage(`Find gift options for ${r.nickname}'s upcoming event`);
-                          }}
-                          className="px-3 py-1.5 bg-violet-50 hover:bg-violet-100 text-violet-700 border border-violet-100 rounded-full text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all active:scale-95 shadow-sm"
-                        >
-                          📅 {r.nickname}'s {r.relationship_type === "girlfriend" ? "Birthday" : "Event"} - {r.daysRemaining} Days
-                        </span>
-                      ))
-                    }
-                  </div>
-                </div>
-              )}
-
-              {/* Forgotten Event Detector */}
-              {getForgottenEvents().map(event => (
-                <div key={event.id} className="p-4 bg-rose-50 border border-rose-100 rounded-3xl flex flex-col gap-3 shadow-sm animate-slide-down">
-                  <div className="flex gap-2.5 items-start">
-                    <div className="p-2 bg-rose-100 text-rose-600 rounded-xl">
-                      <AlertCircle className="w-5 h-5 text-rose-500" />
-                    </div>
-                    <div className="min-w-0">
-                      <h4 className="font-extrabold text-rose-800 text-sm">Forgotten Event Warning</h4>
-                      <p className="text-xs text-rose-600/90 font-medium mt-0.5 leading-relaxed">
-                        {event.nickname}'s event is just {event.daysRemaining} days away! You haven't started a bundle or active chat for them. Let Kappy optimize a custom surprise.
-                      </p>
-                    </div>
-                  </div>
+                {/* Occasion Quick Shortcuts (Redesigned as Pills) */}
+                <div className="flex flex-wrap gap-3 mt-6 justify-start items-center">
                   <button
-                    onClick={() => {
-                      setBuilderRecipient(event.relationship_type);
-                      setBuilderOccasion("Birthday");
-                      setActiveTab("build-gift");
-                    }}
-                    className="w-full py-2 bg-rose-500 hover:bg-rose-600 active:scale-95 text-white font-extrabold text-xs rounded-xl transition-all shadow-sm flex items-center justify-center gap-1 cursor-pointer"
+                    className="flex items-center justify-center w-10 h-10 bg-slate-50 border border-slate-200 rounded-full text-slate-400 hover:bg-slate-100 transition-all cursor-pointer"
                   >
-                    <Gift className="w-3.5 h-3.5" /> Start Hamper Package
+                    <Plus className="w-4 h-4" />
                   </button>
-                </div>
-              ))}
-
-              {/* Occasion Quick Shortcuts */}
-              <div className="space-y-2.5">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Occasions</span>
-                <div className="grid grid-cols-2 gap-2.5">
-                  {OccasionEngine.getActiveOccasions().map((occ) => (
+                  {OccasionEngine.getActiveOccasions().slice(0, 4).map((occ) => (
                     <button
                       key={occ.name}
                       onClick={() => {
                         startNewChatAndSendMessage(`Occasion: ${occ.name}`);
                       }}
-                      className="flex items-center gap-3 p-3 bg-white border border-slate-100 rounded-xl hover:border-violet-300 hover:bg-violet-50/20 text-slate-700 font-bold transition-all text-xs text-left shadow-sm active:scale-95 cursor-pointer"
+                      className="flex items-center gap-2 px-5 py-2 bg-white border border-slate-200 rounded-full hover:border-violet-300 hover:bg-violet-50 text-slate-600 font-semibold transition-all text-sm shadow-sm active:scale-95 cursor-pointer"
                     >
-                      <span className="text-lg">{occ.emoji}</span> {occ.label}
+                      <span className="text-base">{occ.emoji}</span> {occ.label}
                     </button>
                   ))}
                 </div>
               </div>
 
-              {/* Popular Bundles Section (Replaces Trending Products) */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Popular Bundles</span>
-                  <button onClick={() => setActiveTab("build-gift")} className="text-[10px] text-violet-600 font-bold hover:underline">Customize ✨</button>
-                </div>
-                <div className="space-y-3">
-                  {landingBundles.map((hamp: any, idx: number) => (
-                    <div 
-                      key={hamp.id || idx} 
-                      onClick={() => addToBundle({
-                        id: hamp.id || `landing-hamp-${idx}`,
-                        name: hamp.name,
-                        price: hamp.price,
-                        image_url: hamp.image,
-                        url: hamp.url || ""
-                      })}
-                      className="flex gap-3 bg-white border border-slate-100 rounded-2xl p-3 shadow-sm hover:shadow-md transition-all cursor-pointer hover:border-violet-300 hover:bg-violet-50/10 active:scale-[0.98]"
-                      title="Click to add to your hamper package"
-                    >
-                      <img src={hamp.image} alt={hamp.name} className="w-16 h-16 object-cover rounded-xl border border-slate-100 bg-slate-50" />
-                      <div className="flex-1 min-w-0 flex flex-col justify-between">
-                        <div>
-                          <h4 className="font-bold text-slate-800 text-xs md:text-sm truncate">{hamp.name}</h4>
-                          <p className="text-[10px] text-slate-400 font-semibold mt-0.5">{hamp.tag}</p>
+              {/* Dynamic Notification Banners (Replaces old Event blocks) */}
+              <div className="space-y-4">
+                {/* Same-Day Countdown */}
+                {sameDayTimeLeft && (
+                  <div className="p-4 bg-gradient-to-r from-emerald-50 to-teal-50/50 border border-emerald-100 rounded-2xl flex items-center justify-between shadow-sm">
+                    <div className="flex items-center gap-3">
+                      <span className="flex h-2.5 w-2.5 relative">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+                      </span>
+                      <span className="text-sm text-emerald-900 font-bold">Fast Delivery Order Window: {sameDayTimeLeft}</span>
+                    </div>
+                    <span className="text-xs bg-emerald-500 text-white font-extrabold px-2.5 py-1 rounded-full uppercase tracking-wide shadow-sm">Fast 🚚</span>
+                  </div>
+                )}
+
+                {/* Upcoming Events Banners */}
+                {relationships.some(r => getDaysUntilBirthday(r.birthday) !== null) && (
+                  <div className="flex flex-col gap-3">
+                    {relationships
+                      .map(r => ({ ...r, daysRemaining: getDaysUntilBirthday(r.birthday) }))
+                      .filter(r => r.daysRemaining !== null)
+                      .sort((a, b) => (a.daysRemaining || 0) - (b.daysRemaining || 0))
+                      .slice(0, 2)
+                      .map(r => (
+                        <div
+                          key={r.id}
+                          onClick={() => {
+                            startNewChatAndSendMessage(`Find gift options for ${r.nickname}'s upcoming event`);
+                          }}
+                          className="flex items-center justify-between p-4 bg-violet-50/50 hover:bg-violet-50 border border-violet-100 rounded-2xl cursor-pointer transition-all active:scale-95 shadow-sm group"
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-full bg-white flex items-center justify-center text-violet-600 shadow-sm border border-violet-100 text-lg">
+                              📅
+                            </div>
+                            <div>
+                              <h4 className="font-bold text-violet-900 text-sm">{r.nickname}'s {r.relationship_type === "girlfriend" ? "Birthday" : "Event"} is coming up!</h4>
+                              <p className="text-xs text-violet-600 font-medium">In {r.daysRemaining} days. Let Kappy find the perfect gift.</p>
+                            </div>
+                          </div>
+                          <div className="text-violet-500 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <ArrowRight className="w-5 h-5" />
+                          </div>
                         </div>
-                        <div className="flex items-center justify-end mt-1.5">
-                          <span className="text-xs font-black text-rose-600">LKR {hamp.price.toLocaleString()}</span>
-                        </div>
+                      ))
+                    }
+                  </div>
+                )}
+
+                {/* Forgotten Event Detector */}
+                {getForgottenEvents().map(event => (
+                  <div key={event.id} className="p-4 bg-rose-50/50 hover:bg-rose-50 border border-rose-100 rounded-2xl flex items-center justify-between shadow-sm transition-all group">
+                    <div className="flex gap-3 items-center">
+                      <div className="w-10 h-10 rounded-full bg-white flex items-center justify-center text-rose-500 shadow-sm border border-rose-100">
+                        <AlertCircle className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-rose-900 text-sm">Action Needed: {event.nickname}'s event is in {event.daysRemaining} days!</h4>
+                        <p className="text-xs text-rose-600 font-medium">You haven't started a bundle. Let Kappy optimize a custom surprise.</p>
                       </div>
                     </div>
-                  ))}
-                </div>
+                    <button
+                      onClick={() => {
+                        setBuilderRecipient(event.relationship_type);
+                        setBuilderOccasion("Birthday");
+                        setActiveTab("build-gift");
+                      }}
+                      className="px-4 py-2 bg-rose-500 hover:bg-rose-600 active:scale-95 text-white font-bold text-xs rounded-full transition-all shadow-sm flex items-center gap-1.5"
+                    >
+                      <Gift className="w-4 h-4" /> Start Hamper
+                    </button>
+                  </div>
+                ))}
               </div>
 
-              {/* Fast Delivery Today section */}
-              <div className="space-y-3">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Today's Fast Delivery</span>
-                <div className="grid grid-cols-2 gap-3">
+              {/* Inspired For You (Bundles & Fast Delivery) */}
+              <div className="space-y-6 pt-4">
+                <div className="flex items-end justify-between">
+                  <div>
+                    <h2 className="text-xl md:text-2xl font-black text-slate-800 tracking-tight">Inspired for you</h2>
+                    <p className="text-xs md:text-sm text-slate-500 font-medium mt-1">Handpicked ideas based on your preferences</p>
+                  </div>
+                  <button onClick={() => setActiveTab("build-gift")} className="text-xs text-violet-600 font-bold hover:underline flex items-center gap-1 transition-all active:scale-95">View all <ArrowRight className="w-3 h-3" /></button>
+                </div>
+                
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6">
+                  {/* Map Fast Delivery */}
                   {landingFastDelivery.map((prod: any, idx: number) => (
                     <div 
                       key={prod.id || idx} 
@@ -1393,30 +1399,54 @@ export default function ChatWindow() {
                         image_url: prod.image,
                         url: prod.url || ""
                       })}
-                      className="bg-white border border-slate-100 rounded-2xl p-2.5 shadow-sm cursor-pointer hover:border-violet-300 hover:shadow-md transition-all hover:bg-violet-50/10 active:scale-[0.98]"
-                      title="Click to add to your hamper package"
+                      className="group flex flex-col bg-white border border-slate-100 rounded-3xl p-3 shadow-sm hover:-translate-y-1 hover:shadow-xl hover:border-violet-200 transition-all duration-300 cursor-pointer"
                     >
-                      <div className="relative h-28 w-full rounded-xl overflow-hidden bg-slate-50">
-                        <img src={prod.image} alt={prod.name} className="w-full h-full object-cover" />
+                      <div className="relative w-full aspect-square rounded-2xl overflow-hidden bg-slate-50 mb-3 border border-slate-50">
+                        <img src={prod.image} alt={prod.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                        <span className="absolute bottom-2 right-2 bg-white/90 backdrop-blur-sm px-2 py-1 rounded-lg text-[9px] font-black text-emerald-600 uppercase tracking-widest shadow-sm">Fast</span>
                       </div>
-                      <h5 className="font-bold text-slate-800 text-xs mt-2 truncate">{prod.name}</h5>
-                      <p className="text-xs font-extrabold text-slate-500 mt-0.5">LKR {prod.price.toLocaleString()}</p>
+                      <h4 className="font-bold text-slate-800 text-sm truncate">{prod.name}</h4>
+                      <p className="text-xs font-black text-rose-600 mt-1">LKR {prod.price.toLocaleString()}</p>
+                    </div>
+                  ))}
+                  {/* Map Bundles */}
+                  {landingBundles.map((hamp: any, idx: number) => (
+                    <div 
+                      key={hamp.id || idx} 
+                      onClick={() => addToBundle({
+                        id: hamp.id || `landing-hamp-${idx}`,
+                        name: hamp.name,
+                        price: hamp.price,
+                        image_url: hamp.image,
+                        url: hamp.url || ""
+                      })}
+                      className="group flex flex-col bg-white border border-slate-100 rounded-3xl p-3 shadow-sm hover:-translate-y-1 hover:shadow-xl hover:border-violet-200 transition-all duration-300 cursor-pointer"
+                    >
+                      <div className="relative w-full aspect-square rounded-2xl overflow-hidden bg-slate-50 mb-3 border border-slate-50">
+                        <img src={hamp.image} alt={hamp.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                        <span className="absolute bottom-2 right-2 bg-white/90 backdrop-blur-sm px-2 py-1 rounded-lg text-[9px] font-black text-violet-600 uppercase tracking-widest shadow-sm">Bundle</span>
+                      </div>
+                      <h4 className="font-bold text-slate-800 text-sm truncate">{hamp.name}</h4>
+                      <p className="text-[10px] text-slate-400 font-medium truncate">{hamp.tag}</p>
+                      <p className="text-xs font-black text-rose-600 mt-1">LKR {hamp.price.toLocaleString()}</p>
                     </div>
                   ))}
                 </div>
               </div>
 
               {/* Trust badges footer */}
-              <div className="pt-4 border-t border-slate-100 flex justify-between items-center gap-2 text-[10px] text-slate-400 font-bold text-center">
-                <div className="flex-1 flex flex-col items-center gap-1">
+              <div className="pt-10 flex flex-col md:flex-row justify-center items-center gap-6 text-[11px] text-slate-400 font-bold">
+                <div className="flex items-center gap-2">
                   <ShieldCheck className="w-5 h-5 text-emerald-500" />
                   <span>100% Delivery Certainty</span>
                 </div>
-                <div className="flex-1 flex flex-col items-center gap-1">
+                <div className="hidden md:block w-1 h-1 rounded-full bg-slate-200"></div>
+                <div className="flex items-center gap-2">
                   <Truck className="w-5 h-5 text-indigo-500" />
                   <span>Real-time Tracking</span>
                 </div>
-                <div className="flex-1 flex flex-col items-center gap-1">
+                <div className="hidden md:block w-1 h-1 rounded-full bg-slate-200"></div>
+                <div className="flex items-center gap-2">
                   <Sparkles className="w-5 h-5 text-amber-500" />
                   <span>AI Selection Verified</span>
                 </div>

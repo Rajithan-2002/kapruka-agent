@@ -26,7 +26,7 @@ export interface RankedMemory extends ConversationMemory {
 }
 
 export async function getRelationships(userId: string): Promise<Relationship[]> {
-    if (!useCloud || !supabase) return [];
+    if (!useCloud || !supabase || userId === "00000000-0000-0000-0000-000000000000") return [];
     
     const { data, error } = await supabase
         .from("relationships")
@@ -79,7 +79,7 @@ function mapPreferenceRow(row: Record<string, any>): RankedPreference {
 }
 
 export async function getPreferences(userId: string): Promise<RankedPreference[]> {
-    if (!useCloud || !supabase) return [];
+    if (!useCloud || !supabase || userId === "00000000-0000-0000-0000-000000000000") return [];
     
     const { data, error } = await supabase
         .from("preferences")
@@ -103,7 +103,7 @@ export async function getPreferences(userId: string): Promise<RankedPreference[]
 }
 
 export async function getMemories(userId: string): Promise<RankedMemory[]> {
-    if (!useCloud || !supabase) return [];
+    if (!useCloud || !supabase || userId === "00000000-0000-0000-0000-000000000000") return [];
     
     const { data, error } = await supabase
         .from("memories")
@@ -131,6 +131,8 @@ export async function addRelationship(userId: string, data: Omit<Relationship, "
     if (!useCloud || !supabase) throw new Error("No database connected");
 
     const id = `rel-${Date.now()}`;
+    if (userId === "00000000-0000-0000-0000-000000000000") return { ...data, id };
+
     const insertData = {
         id,
         user_id: userId,
@@ -151,6 +153,10 @@ export async function addRelationship(userId: string, data: Omit<Relationship, "
 
 export async function addPreference(userId: string, relationshipId: string | undefined, interest: string): Promise<Preference> {
     if (!useCloud || !supabase) throw new Error("No database connected");
+
+    if (userId === "00000000-0000-0000-0000-000000000000") {
+        return { id: `pref-${Date.now()}`, relationship_id: relationshipId, interest, confidence_score: 1.0 };
+    }
 
     // Phase 3 Check: If preference already exists, just bump importance score
     const existing = await getPreferences(userId);
@@ -186,6 +192,10 @@ export async function addPreference(userId: string, relationshipId: string | und
 export async function addMemory(userId: string, category: string, key: string, value: string): Promise<ConversationMemory> {
     if (!useCloud || !supabase) throw new Error("No database connected");
 
+    if (userId === "00000000-0000-0000-0000-000000000000") {
+        return { id: `mem-${Date.now()}`, category, key, value, timestamp: new Date().toISOString() };
+    }
+
     // Phase 3 Check: Avoid duplicates, bump score
     const existing = await getMemories(userId);
     const match = existing.find(m => m.category === category && m.key === key && m.value.toLowerCase() === value.toLowerCase());
@@ -219,7 +229,7 @@ export async function addMemory(userId: string, category: string, key: string, v
 
 // Phase 3 Scoring Updaters
 export async function incrementPreferenceImportance(userId: string, prefId: string): Promise<void> {
-    if (!useCloud || !supabase) return;
+    if (!useCloud || !supabase || userId === "00000000-0000-0000-0000-000000000000") return;
     try {
         const { data } = await supabase.from("preferences").select("importance_score").eq("id", prefId).eq("user_id", userId).single();
         if (data) {
@@ -237,7 +247,7 @@ export async function incrementPreferenceImportance(userId: string, prefId: stri
 }
 
 export async function incrementMemoryImportance(userId: string, memId: string): Promise<void> {
-    if (!useCloud || !supabase) return;
+    if (!useCloud || !supabase || userId === "00000000-0000-0000-0000-000000000000") return;
     try {
         const { data } = await supabase.from("memories").select("importance_score").eq("id", memId).eq("user_id", userId).single();
         if (data) {
@@ -255,7 +265,7 @@ export async function incrementMemoryImportance(userId: string, memId: string): 
 }
 
 export async function deleteRelationship(userId: string, relationshipId: string): Promise<void> {
-    if (!useCloud || !supabase) return;
+    if (!useCloud || !supabase || userId === "00000000-0000-0000-0000-000000000000") return;
     try {
         // Cascade delete associated preferences first
         await supabase.from("preferences").delete().eq("relationship_id", relationshipId).eq("user_id", userId);
@@ -270,6 +280,7 @@ export async function deleteRelationship(userId: string, relationshipId: string)
 
 export async function updateRelationship(userId: string, relationshipId: string, updates: Partial<Omit<Relationship, "id">>): Promise<Relationship> {
     if (!useCloud || !supabase) throw new Error("No database connected");
+    if (userId === "00000000-0000-0000-0000-000000000000") return { id: relationshipId, relationship_type: updates.relationship_type || "", nickname: updates.nickname || "" } as Relationship;
     try {
         const updatePayload: Record<string, any> = {};
         if (updates.relationship_type !== undefined) updatePayload.relationship_type = updates.relationship_type;
@@ -300,7 +311,7 @@ export async function updateRelationship(userId: string, relationshipId: string,
 }
 
 export async function deletePreference(userId: string, preferenceId: string): Promise<void> {
-    if (!useCloud || !supabase) return;
+    if (!useCloud || !supabase || userId === "00000000-0000-0000-0000-000000000000") return;
     try {
         const { error } = await supabase.from("preferences").delete().eq("id", preferenceId).eq("user_id", userId);
         if (error) throw error;

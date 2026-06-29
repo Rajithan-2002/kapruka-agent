@@ -2524,6 +2524,7 @@ Based on the Master System Prompt rules and the above context, generate Kapri's 
 5. EXPLICIT TOOL STATUS RULES:
    - If Tool Results status is "failed", DO NOT say "Let me check" or "Hang tight". Acknowledge the failure honestly ("I couldn't retrieve that information right now. Want me to try again?").
    - If Tool Results status is "cancelled", acknowledge the cancellation naturally ("No problem at all! What else can I help with?").
+   - If Tool Results indicate clarification_needed is true, you MUST ask the user the exact clarification message provided in the tool results, but ALWAYS translate it seamlessly into the exact language and tone the user is currently speaking in. Do NOT just output the English message if they are speaking Sinhala/Singlish or Tamil.
 6. If the active Recipient is "None specified" or "General", or if no specific recipient is determined, you MUST NOT assume, mention, or suggest any specific relationship or recipient (e.g., "mom", "mother", "girlfriend", "dad") in your text response. Keep references generic (e.g., "someone special" or "your recipient").
 ${understandingPlan.intent === "GREETING" ? `7. GREETING MODE RULES:
    - The user just greeted you. Keep it warm, casual, and friendly.
@@ -2638,9 +2639,9 @@ ${understandingPlan.intent !== "GREETING" && understandingPlan.intelligenceData?
             }
         };
 
-        if (toolResults && ((toolResults as any).guardrail_triggered || (toolResults as any).clarification_needed)) {
+        if (toolResults && (toolResults as any).guardrail_triggered) {
             const msg = (toolResults as any).message;
-            // Guardrails and Clarifications bypass the LLM
+            // Guardrails bypass the LLM
             // Phase 5: Judge Mode Integration
             const { JudgeAdapter } = await import("@/lib/intelligence/observability/judgeAdapter");
             const rawTraces = (global as any).currentTraces || [];
