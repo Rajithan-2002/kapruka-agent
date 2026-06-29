@@ -132,6 +132,11 @@ export interface ExtractionResult {
     general_note?: string;
     confidence: number;
   };
+  new_slang_detected?: {
+    slang_word: string;
+    standard_english: string;
+    category: "RELATIONSHIP" | "PRODUCT" | "OCCASION" | "OTHER";
+  }[];
 }
 
 export interface IntelligenceOutput {
@@ -145,6 +150,7 @@ export interface IntelligenceOutput {
   interaction_mode?: "DISCOVERY" | "RECOMMENDATION" | "REFINEMENT";
   action?: "SEARCH" | "SHOW_MORE" | "RECALL_PREVIOUS_RESULTS";
   search_sufficiency_score?: number;
+  searchMode?: "EXPLORATORY" | "PRECISE";
   
   // The accumulated state
   intent?: IntentType;
@@ -174,6 +180,11 @@ export interface IntelligenceOutput {
     general_note?: string;
     confidence: number;
   };
+  new_slang_detected?: {
+    slang_word: string;
+    standard_english: string;
+    category: "RELATIONSHIP" | "PRODUCT" | "OCCASION" | "OTHER";
+  }[];
 
   // Observability
   traces: IntelligenceTrace[];

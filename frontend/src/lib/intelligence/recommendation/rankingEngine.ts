@@ -2,6 +2,12 @@ import { RecommendationCandidate } from "./types";
 import { AffinityRecord } from "./affinityEngine";
 import { FeatureFlags } from "../config/featureFlags";
 
+export interface MemoryInfluenceRecord {
+    memory: string;          // e.g. "likes coffee"
+    scoreDelta: number;      // e.g. +0.05 or 0 for blocked
+    blocked: boolean;        // true if this was a negative match causing rejection
+}
+
 export interface RankingContext {
     searchQuery: string;
     situation: string; // occasion type (e.g. "birthday")
@@ -11,7 +17,8 @@ export interface RankingContext {
     communityScores: Record<string, { likeRate: number; purchaseRate: number; bundleRate: number; score: number }>;
     trendScores: Record<string, number>;
     queryIntelligence?: { entity: string; score: number }[];
-    memoryTags?: string[];
+    memoryTags?: string[];         // positive memory tags for boosting
+    negativeMemoryTags?: string[]; // negative preference tags for hard rejection
     isBudgetExplicit?: boolean;
 }
 
@@ -40,10 +47,16 @@ export class RankingEngine {
             const pid = p.id || p.product_id;
             
             // 1. Situation Match (30%)
-            const situationScore = this.calcSituationScore(p, context.situation, context.searchQuery);
+            let situationScore = this.calcSituationScore(p, context.situation, context.searchQuery);
             
             // 2. Recipient Match (20%)
-            const recipientScore = this.calcRecipientScore(p, context.recipient);
+            let recipientScore = this.calcRecipientScore(p, context.recipient);
+
+            // Apply child context boosts
+            if (p.childBoost) {
+                situationScore = Math.min(1.0, situationScore + 0.3);
+                recipientScore = Math.min(1.0, recipientScore + 0.3);
+            }
             
             // 3. Delivery Feasibility (20%) - Hard Requirement
             const deliveryScore = this.calcDeliveryScore(p);
@@ -79,12 +92,48 @@ export class RankingEngine {
             // Apply boosts
             let finalScore = (rawScore + (memoryBoostScore * 0.05)) * intelMultiplier;
 
+            // Apply child context penalty - refined from 0.05 to 0.5 to prevent complete wipeout
+            if (p.childPenalty) {
+                finalScore *= 0.5;
+            }
+
             // Hard constraints check: out of stock or completely out of budget range receives severe penalty
             if (p.in_stock === false || p.inStock === false || deliveryScore === 0) {
                 finalScore = 0.0;
             }
             if (context.isBudgetExplicit && budgetScore === 0) {
                 finalScore = 0.0;
+            }
+
+            // Negative memory — hard rejection before returning
+            const isNegativeBlocked = this.calcNegativePenalty(p, context.negativeMemoryTags || []);
+            if (isNegativeBlocked) {
+                finalScore = 0.0;
+            }
+
+            // Build memory influence record for God Mode
+            const memoryInfluence: MemoryInfluenceRecord[] = [];
+            if (isNegativeBlocked) {
+                const matchedTag = (context.negativeMemoryTags || []).find(tag => {
+                    const pStr = (p.name + " " + (p.tags || "") + " " + (p.summary || "")).toLowerCase();
+                    return pStr.includes(tag.toLowerCase());
+                });
+                if (matchedTag) {
+                    memoryInfluence.push({ memory: `dislikes ${matchedTag}`, scoreDelta: 0, blocked: true });
+                }
+            } else if (memoryBoostScore > 0) {
+                const matchedTag = (context.memoryTags || []).find(tag => {
+                    const keyword = tag.split(" ").pop()?.toLowerCase();
+                    const pStr = (p.tags || p.name || "").toLowerCase();
+                    return keyword && pStr.includes(keyword);
+                });
+                if (matchedTag) {
+                    memoryInfluence.push({
+                        memory: matchedTag,
+                        scoreDelta: parseFloat((memoryBoostScore * 0.05).toFixed(3)),
+                        blocked: false
+                    });
+                }
             }
 
             return {
@@ -98,7 +147,8 @@ export class RankingEngine {
                 memoryBoostScore,
                 communityScore,
                 trendScore,
-                finalScore: parseFloat(finalScore.toFixed(3))
+                finalScore: parseFloat(finalScore.toFixed(3)),
+                memoryInfluence
             };
         });
 
@@ -113,7 +163,8 @@ export class RankingEngine {
 
     private static calcSituationScore(product: any, situation: string, searchQuery: string): number {
         let score = 0.4; // Base score
-        const pTags = (product.name + " " + (product.summary || "") + " " + (product.tags || "") + " " + (product.categories || "") + " " + (product.category || "")).toLowerCase();
+        const catStr = typeof product.category === 'object' && product.category !== null ? (product.category.name || product.category.id || "") : (product.category || "");
+        const pTags = (product.name + " " + (product.summary || "") + " " + (product.tags || "") + " " + (product.categories || "") + " " + catStr).toLowerCase();
         
         if (situation) {
             const occ = situation.toLowerCase().trim();
@@ -140,7 +191,8 @@ export class RankingEngine {
         let score = 0.5; // Neutral baseline
         if (recipient) {
             const recip = recipient.toLowerCase().trim();
-            const pTags = (product.name + " " + (product.summary || "") + " " + (product.tags || "") + " " + (product.category || "")).toLowerCase();
+            const catStr = typeof product.category === 'object' && product.category !== null ? (product.category.name || product.category.id || "") : (product.category || "");
+            const pTags = (product.name + " " + (product.summary || "") + " " + (product.tags || "") + " " + catStr).toLowerCase();
             
             const girlfriendWife = ["rose", "flower", "chocolate", "teddy", "perfume", "jewelry", "pendant", "ring", "red", "heart", "hamper"];
             const fatherDad = ["wallet", "belt", "watch", "shaving", "perfume", "coffee", "mug", "electronics", "card", "shirt", "tool", "hamper"];
@@ -201,7 +253,8 @@ export class RankingEngine {
     private static calcAffinityScore(product: any, affinities: AffinityRecord[]): number {
         if (!affinities || !affinities.length) return 0.5; // Cold start
         
-        const category = (product.category || "").toLowerCase();
+        const rawCategory = product.category;
+        const category = (typeof rawCategory === 'object' && rawCategory !== null ? (rawCategory.name || rawCategory.id || "") : (rawCategory || "")).toLowerCase();
         const catAffinity = affinities.find(a => a.targetType === "category" && a.targetId.toLowerCase() === category);
         
         if (catAffinity) {
@@ -225,6 +278,23 @@ export class RankingEngine {
             }
         }
         return 0.0;
+    }
+
+    /**
+     * Returns true if the product matches any negative memory tag (dislike).
+     * Used to hard-reject products the user/recipient dislikes.
+     */
+    private static calcNegativePenalty(product: any, negativeTags: string[]): boolean {
+        if (!negativeTags?.length) return false;
+        const pTags = (product.name + " " + (product.tags || "") + " " + (product.summary || "") + " " + (product.category?.name || product.category || "")).toLowerCase();
+        return negativeTags.some(tag => {
+            const cleanTag = tag.trim().toLowerCase();
+            if (cleanTag.length < 3) return false;
+            // Use bounded word matching so substrings of words don't trigger rejection (e.g. "tea" matching "steam")
+            const escapedTag = cleanTag.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+            const regex = new RegExp(`\\b${escapedTag}\\b`, 'i');
+            return regex.test(pTags);
+        });
     }
 
     private static calcQueryIntelligenceBoost(product: any, intelligenceRecords: { entity: string; score: number }[]): number {

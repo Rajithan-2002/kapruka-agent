@@ -41,8 +41,9 @@ export class ClarificationRule extends BaseRule {
 
     evaluate(context: RuleContext): RuleResult {
         const ue = context.understandingPlan;
+        const isShopping = ["SHOPPING", "GIFTING", "REORDER", "BROWSING", "PRICE_REFINEMENT", "PREFERENCE_CORRECTION", "EXPLORATION", "PRODUCT_REJECTION"].includes(ue.intent || "");
 
-        if (ue.intelligenceData && !ue.intelligenceData.readyForRecommendation) {
+        if (isShopping && ue.intelligenceData && !ue.intelligenceData.readyForRecommendation) {
             
             // Missing Information Prioritizer
             const missing = [];
@@ -90,25 +91,26 @@ export class ShowMoreRule extends BaseRule {
     name = "ShowMoreRule";
     category: RuleCategory = "shopping";
     priority: RulePriority = "NORMAL";
-    ruleVersion = "1.0.0";
+    ruleVersion = "1.1.0";
 
     evaluate(context: RuleContext): RuleResult {
         const action = context.understandingPlan.intelligenceData?.action;
+        const ue = context.understandingPlan;
         
-        if (action === 'SHOW_MORE' || action === 'RECALL_PREVIOUS_RESULTS') {
+        if (action === 'SHOW_MORE' || action === 'RECALL_PREVIOUS_RESULTS' || ue.intent === 'PRICE_REFINEMENT' || ue.intent === 'PREFERENCE_CORRECTION') {
             return {
                 matched: true,
                 priority: this.priority,
                 action: "SHOW_MORE",
-                reason: `User explicitly requested: ${action}`,
+                reason: `User requested refinement or show more: action=${action}, intent=${ue.intent}`,
                 confidence: 0.9,
                 mcp_search_query: context.message,
-                detected_intent: action,
-                trace: [`[${this.name}] Matched action: ${action}`]
+                detected_intent: action || ue.intent,
+                trace: [`[${this.name}] Matched action/intent refinement: ${action || ue.intent}`]
             };
         }
 
-        return this.noMatch("Action is not SHOW_MORE or RECALL_PREVIOUS_RESULTS.");
+        return this.noMatch("Action is not SHOW_MORE or RECALL_PREVIOUS_RESULTS, and intent is not price/preference refinement.");
     }
 }
 

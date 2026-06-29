@@ -24,11 +24,11 @@ export class IntelligenceOrchestrator {
     this.recommendationPlanner = new RecommendationPlanner(this.tracer);
   }
 
-  public async processRequest(userId: string | undefined, userMessage: string, chatHistory: any[]): Promise<IntelligenceOutput> {
+  public async processRequest(userId: string | undefined, userMessage: string, chatHistory: any[], lexiconString: string = ""): Promise<IntelligenceOutput> {
     this.tracer.clearTraces();
 
     // 1. Single LLM Extraction Pass
-    const extraction = await runIntelligenceExtraction(userMessage, chatHistory, this.tracer);
+    const extraction = await runIntelligenceExtraction(userMessage, chatHistory, this.tracer, lexiconString);
 
     // 2. Context Confidence Gate (Stage 0)
     const confidenceGate = this.confidenceEngine.evaluate(extraction);
@@ -49,6 +49,8 @@ export class IntelligenceOrchestrator {
         preference_corrections: extraction.preference_corrections,
         price_refinement: extraction.price_refinement,
         extracted_memory: extraction.extracted_memory,
+        new_slang_detected: extraction.new_slang_detected,
+        searchMode: confidenceGate.result.searchMode,
         traces: this.tracer.getTraces()
       };
     }
@@ -90,6 +92,8 @@ export class IntelligenceOrchestrator {
       preference_corrections: extraction.preference_corrections,
       price_refinement: extraction.price_refinement,
       extracted_memory: extraction.extracted_memory,
+      new_slang_detected: extraction.new_slang_detected,
+      searchMode: confidenceGate.result.searchMode,
       relationship,
       plan,
       traces: this.tracer.getTraces()

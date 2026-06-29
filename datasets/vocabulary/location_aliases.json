@@ -1,0 +1,263 @@
+[
+  {
+    "input": "mahanuwara",
+    "normalized": "Kandy",
+    "id": "LOC001",
+    "location_type": "city",
+    "aliases": [
+      "mahanuwara"
+    ]
+  },
+  {
+    "input": "maha nuwara",
+    "normalized": "Kandy",
+    "id": "LOC002",
+    "location_type": "city",
+    "aliases": [
+      "maha nuwara"
+    ]
+  },
+  {
+    "input": "yalpanam",
+    "normalized": "Jaffna",
+    "id": "LOC003",
+    "location_type": "city",
+    "aliases": [
+      "yalpanam"
+    ]
+  },
+  {
+    "input": "yalpaanam",
+    "normalized": "Jaffna",
+    "id": "LOC004",
+    "location_type": "city",
+    "aliases": [
+      "yalpaanam"
+    ]
+  },
+  {
+    "input": "யாழ்ப்பாணம்",
+    "normalized": "Jaffna",
+    "id": "LOC005",
+    "location_type": "city",
+    "aliases": [
+      "யாழ்ப்பாணம்"
+    ]
+  },
+  {
+    "input": "col 7",
+    "normalized": "Colombo 07",
+    "id": "LOC006",
+    "location_type": "city",
+    "aliases": [
+      "col 7"
+    ]
+  },
+  {
+    "input": "cmb",
+    "normalized": "Colombo",
+    "id": "LOC007",
+    "location_type": "city",
+    "aliases": [
+      "cmb"
+    ]
+  },
+  {
+    "input": "pettah",
+    "normalized": "Colombo 11",
+    "id": "LOC008",
+    "location_type": "city",
+    "aliases": [
+      "pettah"
+    ]
+  },
+  {
+    "input": "fort",
+    "normalized": "Colombo 01",
+    "id": "LOC009",
+    "location_type": "city",
+    "aliases": [
+      "fort"
+    ]
+  },
+  {
+    "input": "borella",
+    "normalized": "Colombo 08",
+    "id": "LOC010",
+    "location_type": "city",
+    "aliases": [
+      "borella"
+    ]
+  },
+  {
+    "input": "wellawatte",
+    "normalized": "Colombo 06",
+    "id": "LOC011",
+    "location_type": "city",
+    "aliases": [
+      "wellawatte"
+    ]
+  },
+  {
+    "input": "bambalapitiya",
+    "normalized": "Colombo 04",
+    "id": "LOC012",
+    "location_type": "city",
+    "aliases": [
+      "bambalapitiya"
+    ]
+  },
+  {
+    "input": "dehiwala",
+    "normalized": "Dehiwala-Mount Lavinia",
+    "id": "LOC013",
+    "location_type": "city",
+    "aliases": [
+      "dehiwala"
+    ]
+  },
+  {
+    "input": "gampaha",
+    "normalized": "Gampaha",
+    "id": "LOC014",
+    "location_type": "city",
+    "aliases": [
+      "gampaha"
+    ]
+  },
+  {
+    "input": "kurunegala",
+    "normalized": "Kurunegala",
+    "id": "LOC015",
+    "location_type": "city",
+    "aliases": [
+      "kurunegala"
+    ]
+  },
+  {
+    "input": "matara",
+    "normalized": "Matara",
+    "id": "LOC016",
+    "location_type": "city",
+    "aliases": [
+      "matara"
+    ]
+  },
+  {
+    "input": "hambantota",
+    "normalized": "Hambantota",
+    "id": "LOC017",
+    "location_type": "city",
+    "aliases": [
+      "hambantota"
+    ]
+  },
+  {
+    "input": "anuradhapura",
+    "normalized": "Anuradhapura",
+    "id": "LOC018",
+    "location_type": "city",
+    "aliases": [
+      "anuradhapura"
+    ]
+  },
+  {
+    "input": "මහනුවර",
+    "normalized": "Kandy",
+    "id": "LOC019",
+    "location_type": "city",
+    "aliases": [
+      "මහනුවර"
+    ]
+  },
+  {
+    "input": "යාපනය",
+    "normalized": "Jaffna",
+    "id": "LOC020",
+    "location_type": "city",
+    "aliases": [
+      "යාපනය"
+    ]
+  },
+  {
+    "input": "කොළඹ",
+    "normalized": "Colombo",
+    "id": "LOC021",
+    "location_type": "city",
+    "aliases": [
+      "කොළඹ"
+    ]
+  },
+  {
+    "input": "ගාල්ල",
+    "normalized": "Galle",
+    "id": "LOC022",
+    "location_type": "city",
+    "aliases": [
+      "ගාල්ල"
+    ]
+  },
+  {
+    "input": "கொழும்பு",
+    "normalized": "Colombo",
+    "id": "LOC023",
+    "location_type": "city",
+    "aliases": [
+      "கொழும்பு"
+    ]
+  },
+  {
+    "input": "கண்டி",
+    "normalized": "Kandy",
+    "id": "LOC024",
+    "location_type": "city",
+    "aliases": [
+      "கண்டி"
+    ]
+  },
+  {
+    "input": "hospital eka laga",
+    "normalized": "near hospital",
+    "location_type": "landmark",
+    "id": "LOC025",
+    "aliases": [
+      "hospital eka laga"
+    ]
+  },
+  {
+    "input": "school eka gawa",
+    "normalized": "near school",
+    "location_type": "landmark",
+    "id": "LOC026",
+    "aliases": [
+      "school eka gawa"
+    ]
+  },
+  {
+    "input": "handiya",
+    "normalized": "junction",
+    "location_type": "landmark",
+    "id": "LOC027",
+    "aliases": [
+      "handiya"
+    ]
+  },
+  {
+    "input": "bus halt eka gawa",
+    "normalized": "near bus stop",
+    "location_type": "landmark",
+    "id": "LOC028",
+    "aliases": [
+      "bus halt eka gawa"
+    ]
+  },
+  {
+    "input": "kovil pakkathula",
+    "normalized": "near temple",
+    "location_type": "landmark",
+    "id": "LOC029",
+    "aliases": [
+      "kovil pakkathula"
+    ]
+  }
+]

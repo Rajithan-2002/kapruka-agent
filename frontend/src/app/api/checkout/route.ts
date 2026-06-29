@@ -7,35 +7,27 @@ export async function POST(request: Request) {
         const payload = await request.json();
         console.log("[Checkout API] Received checkout payload:", JSON.stringify(payload, null, 2));
 
-        // Intercept mock products for seamless UI demo
-        const hasMockIds = payload.cart?.some((item: any) => 
-            ['roses', 'chocs', 'card'].includes(item.product_id) || 
-            item.product_id.startsWith('mock-') ||
-            item.product_id.startsWith('landing-')
-        );
-
-        if (hasMockIds) {
-            console.log("[Checkout API] Mock products detected. Returning mock checkout URL.");
-            return NextResponse.json({
-                success: true,
-                checkout_url: "https://www.kapruka.com/checkout/demo-payment-link",
-                order_ref: `DEMO-${Math.floor(Math.random() * 100000)}`,
-                summary: {
-                    items_total: 4500,
-                    delivery_fee: 300,
-                    grand_total: 4800
+        // Create order via MCP with automatic retry for rate limits
+        let result;
+        let maxRetries = 3;
+        let attempt = 0;
+        
+        while (attempt < maxRetries) {
+            try {
+                result = await mcpCreateOrder(payload);
+                if (!result || !result.checkout_url) {
+                    throw new Error("Missing checkout_url in MCP response");
                 }
-            });
-        }
-
-        // Create order via MCP
-        const result = await mcpCreateOrder(payload);
-        if (!result || !result.checkout_url) {
-            console.error("[Checkout API] Failed to create order via MCP. Result:", result);
-            return NextResponse.json({
-                success: false,
-                error: "Failed to create order on Kapruka MCP server."
-            }, { status: 500 });
+                break; // Success, exit retry loop
+            } catch (err: any) {
+                if (err.message?.includes("Rate limit") && attempt < maxRetries - 1) {
+                    console.log(`[Checkout API] Rate limit hit. Retrying attempt ${attempt + 1} of ${maxRetries}...`);
+                    await new Promise(r => setTimeout(r, 2000 * (attempt + 1))); // Exponential backoff: 2s, 4s
+                    attempt++;
+                } else {
+                    throw err; // Not a rate limit or out of retries
+                }
+            }
         }
 
         console.log("[Checkout API] MCP Order created successfully:", result);

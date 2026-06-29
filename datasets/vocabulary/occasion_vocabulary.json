@@ -1,0 +1,402 @@
+[
+  {
+    "id": "IS164",
+    "input": "birthday eka",
+    "normalized": "birthday",
+    "language": "Singlish",
+    "category": "occasion",
+    "confidence": "HIGH",
+    "implied_intent": "BIRTHDAY_GIFT",
+    "implied_flag": null,
+    "usage_example": "amma ge birthday eka",
+    "aliases": [
+      "birthday eka",
+      "bday eka",
+      "birthday"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS165",
+    "input": "birthday heta",
+    "normalized": "birthday tomorrow",
+    "language": "Mixed",
+    "category": "occasion",
+    "confidence": "HIGH",
+    "implied_intent": "BIRTHDAY_GIFT",
+    "implied_flag": "URGENT",
+    "usage_example": "nangi ge birthday heta",
+    "aliases": [
+      "birthday heta",
+      "birthday eka heta"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS166",
+    "input": "anniversary",
+    "normalized": "anniversary",
+    "language": "English",
+    "category": "occasion",
+    "confidence": "HIGH",
+    "implied_intent": "ANNIVERSARY_GIFT",
+    "implied_flag": null,
+    "usage_example": "mage anniversary eka",
+    "aliases": [
+      "anniversary",
+      "anni"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS167",
+    "input": "varsari",
+    "normalized": "anniversary",
+    "language": "Tanglish",
+    "category": "occasion",
+    "confidence": "HIGH",
+    "implied_intent": "ANNIVERSARY_GIFT",
+    "implied_flag": null,
+    "usage_example": "wedding varsari",
+    "aliases": [
+      "varsari",
+      "varshari"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS168",
+    "input": "piranda naal",
+    "normalized": "birthday",
+    "language": "Tanglish",
+    "category": "occasion",
+    "confidence": "HIGH",
+    "implied_intent": "BIRTHDAY_GIFT",
+    "implied_flag": null,
+    "usage_example": "appa piranda naal",
+    "aliases": [
+      "piranda naal",
+      "pirantha naal"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS169",
+    "input": "wedding",
+    "normalized": "wedding",
+    "language": "English",
+    "category": "occasion",
+    "confidence": "HIGH",
+    "implied_intent": "WEDDING_GIFT",
+    "implied_flag": null,
+    "usage_example": "friend wedding ekak",
+    "aliases": [
+      "wedding",
+      "marriage"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS170",
+    "input": "kalyanam",
+    "normalized": "wedding",
+    "language": "Tanglish",
+    "category": "occasion",
+    "confidence": "HIGH",
+    "implied_intent": "WEDDING_GIFT",
+    "implied_flag": null,
+    "usage_example": "kalyanam ku gift venum",
+    "aliases": [
+      "kalyanam",
+      "kalyana"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS171",
+    "input": "avurudu",
+    "normalized": "sinhala tamil new year",
+    "language": "Singlish",
+    "category": "occasion",
+    "confidence": "HIGH",
+    "implied_intent": "NEW_YEAR_GIFT",
+    "implied_flag": null,
+    "usage_example": "avurudu shopping karanna one",
+    "aliases": [
+      "avurudu",
+      "aluth avurudda"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS172",
+    "input": "aluth avurudda",
+    "normalized": "new year",
+    "language": "Singlish",
+    "category": "occasion",
+    "confidence": "HIGH",
+    "implied_intent": "NEW_YEAR_GIFT",
+    "implied_flag": null,
+    "usage_example": "aluth avuruddata ganna one",
+    "aliases": [
+      "aluth avurudda",
+      "aluth awurudda"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS173",
+    "input": "puthandu",
+    "normalized": "tamil new year",
+    "language": "Tanglish",
+    "category": "occasion",
+    "confidence": "HIGH",
+    "implied_intent": "NEW_YEAR_GIFT",
+    "implied_flag": null,
+    "usage_example": "puthandu ku sweets venum",
+    "aliases": [
+      "puthandu",
+      "puthaandu"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS174",
+    "input": "vesak",
+    "normalized": "vesak festival",
+    "language": "Mixed",
+    "category": "occasion",
+    "confidence": "HIGH",
+    "implied_intent": "RELIGIOUS_PURCHASE",
+    "implied_flag": null,
+    "usage_example": "vesak lantern ekak one",
+    "aliases": [
+      "vesak",
+      "wesak"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS175",
+    "input": "poson",
+    "normalized": "poson festival",
+    "language": "Mixed",
+    "category": "occasion",
+    "confidence": "HIGH",
+    "implied_intent": "RELIGIOUS_PURCHASE",
+    "implied_flag": null,
+    "usage_example": "poson dan salakili one",
+    "aliases": [
+      "poson",
+      "poson poya"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS176",
+    "input": "deepavali",
+    "normalized": "deepavali festival",
+    "language": "Mixed",
+    "category": "occasion",
+    "confidence": "HIGH",
+    "implied_intent": "FESTIVAL_SHOPPING",
+    "implied_flag": null,
+    "usage_example": "deepavali sweets venum",
+    "aliases": [
+      "deepavali",
+      "diwali"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS177",
+    "input": "eid",
+    "normalized": "eid festival",
+    "language": "English",
+    "category": "occasion",
+    "confidence": "HIGH",
+    "implied_intent": "FESTIVAL_SHOPPING",
+    "implied_flag": null,
+    "usage_example": "eid gift hamper one",
+    "aliases": [
+      "eid",
+      "eid mubarak"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS178",
+    "input": "christmas",
+    "normalized": "christmas",
+    "language": "English",
+    "category": "occasion",
+    "confidence": "HIGH",
+    "implied_intent": "CHRISTMAS_GIFT",
+    "implied_flag": null,
+    "usage_example": "christmas gift ekak one",
+    "aliases": [
+      "christmas",
+      "xmas"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS179",
+    "input": "valentines",
+    "normalized": "valentine's day",
+    "language": "English",
+    "category": "occasion",
+    "confidence": "HIGH",
+    "implied_intent": "ROMANTIC_GIFT",
+    "implied_flag": null,
+    "usage_example": "valentines gift ekak one",
+    "aliases": [
+      "valentines",
+      "valentine",
+      "valentines day"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS180",
+    "input": "new baby",
+    "normalized": "newborn celebration",
+    "language": "English",
+    "category": "occasion",
+    "confidence": "HIGH",
+    "implied_intent": "BABY_GIFT",
+    "implied_flag": null,
+    "usage_example": "friend ge new baby",
+    "aliases": [
+      "new baby",
+      "baby born"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS181",
+    "input": "baby shower",
+    "normalized": "baby shower",
+    "language": "English",
+    "category": "occasion",
+    "confidence": "HIGH",
+    "implied_intent": "BABY_GIFT",
+    "implied_flag": null,
+    "usage_example": "baby shower gift ekak one",
+    "aliases": [
+      "baby shower"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS182",
+    "input": "graduation",
+    "normalized": "graduation",
+    "language": "English",
+    "category": "occasion",
+    "confidence": "HIGH",
+    "implied_intent": "ACHIEVEMENT_GIFT",
+    "implied_flag": null,
+    "usage_example": "malli graduation eka",
+    "aliases": [
+      "graduation",
+      "graduate una"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS183",
+    "input": "promotion",
+    "normalized": "job promotion",
+    "language": "English",
+    "category": "occasion",
+    "confidence": "HIGH",
+    "implied_intent": "ACHIEVEMENT_GIFT",
+    "implied_flag": null,
+    "usage_example": "promotion ekata gift ekak one",
+    "aliases": [
+      "promotion",
+      "promoted una"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS184",
+    "input": "new job",
+    "normalized": "new job",
+    "language": "English",
+    "category": "occasion",
+    "confidence": "HIGH",
+    "implied_intent": "ACHIEVEMENT_GIFT",
+    "implied_flag": null,
+    "usage_example": "new job ekata gift ekak one",
+    "aliases": [
+      "new job",
+      "job hambuna"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS185",
+    "input": "passed exam",
+    "normalized": "exam success",
+    "language": "English",
+    "category": "occasion",
+    "confidence": "HIGH",
+    "implied_intent": "ACHIEVEMENT_GIFT",
+    "implied_flag": null,
+    "usage_example": "nangi passed exam",
+    "aliases": [
+      "passed exam",
+      "exam pass una"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS186",
+    "input": "farewell",
+    "normalized": "farewell event",
+    "language": "English",
+    "category": "occasion",
+    "confidence": "HIGH",
+    "implied_intent": "FAREWELL_GIFT",
+    "implied_flag": null,
+    "usage_example": "office farewell ekak",
+    "aliases": [
+      "farewell",
+      "send off"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS187",
+    "input": "secret santa",
+    "normalized": "secret santa gift exchange",
+    "language": "English",
+    "category": "occasion",
+    "confidence": "HIGH",
+    "implied_intent": "SECRET_SANTA_GIFT",
+    "implied_flag": null,
+    "usage_example": "secret santa gift ekak one",
+    "aliases": [
+      "secret santa"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS188",
+    "input": "house warming",
+    "normalized": "housewarming",
+    "language": "English",
+    "category": "occasion",
+    "confidence": "HIGH",
+    "implied_intent": "HOUSEWARMING_GIFT",
+    "implied_flag": null,
+    "usage_example": "house warming ekata monawahari one",
+    "aliases": [
+      "house warming",
+      "housewarming"
+    ],
+    "do_not_confuse_with": null
+  }
+]

@@ -84,6 +84,16 @@ export function rankProducts(
             recipientScore *= 0.3; // Heavy penalty
         }
 
+        // Apply Child Context Filter boosts and penalties
+        if (prod.childPenalty) {
+            recipientScore *= 0.5; // Softer penalty to prevent complete validation collapse
+            occasionScore *= 0.5;
+        }
+        if (prod.childBoost) {
+            recipientScore = Math.min(1.0, recipientScore + 0.3);
+            occasionScore = Math.min(1.0, occasionScore + 0.3);
+        }
+
         // 3. BUDGET MATCH
         let budgetScore = 0.0;
         const target = context.targetBudget;

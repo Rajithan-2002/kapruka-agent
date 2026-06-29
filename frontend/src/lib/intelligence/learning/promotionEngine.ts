@@ -66,6 +66,19 @@ export class PromotionEngine {
         evidence.lastPromotion = new Date();
         suggested.status = "PROMOTED";
 
-        // TODO: Update `user_evidence` Supabase table to persist `lastPromotion`
+        // Persist lastPromotion to Supabase so cooldown survives server restarts
+        try {
+            const { supabase, useCloud } = await import("../../db");
+            if (useCloud && supabase) {
+                await supabase.from("user_evidence")
+                    .update({ last_promotion: new Date().toISOString() })
+                    .eq("user_id", evidence.userId)
+                    .eq("entity_type", evidence.entityType)
+                    .eq("entity_id", evidence.entityId);
+            }
+        } catch (err) {
+            console.warn("[PromotionEngine] Failed to persist lastPromotion to Supabase:", err);
+        }
+
     }
 }

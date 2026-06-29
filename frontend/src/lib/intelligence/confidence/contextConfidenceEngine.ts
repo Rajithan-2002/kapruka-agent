@@ -5,6 +5,7 @@ export interface ConfidenceResult {
   confidence: number;
   recommendationReady: boolean;
   reason?: string;
+  searchMode?: "EXPLORATORY" | "PRECISE";
 }
 
 export class ContextConfidenceEngine {
@@ -40,21 +41,16 @@ export class ContextConfidenceEngine {
     const sufficiencyScore = extraction.search_sufficiency_score !== undefined ? extraction.search_sufficiency_score : confidence;
     const isSearchSufficient = sufficiencyScore >= 0.6;
 
-    // Programmatic MVC Check to override overly strict LLM behavior
-    let mvcMet = false;
-    const REFINEMENT_INTENTS = ["PRICE_REFINEMENT", "PREFERENCE_CORRECTION"];
+    // Adaptive MVC Calculation
+    let contextScore = 0;
+    if (extraction.situation?.recipient && extraction.situation.recipient !== "UNKNOWN") contextScore += 0.4;
+    if (extraction.situation?.occasion && extraction.situation.occasion !== "UNKNOWN") contextScore += 0.4;
+    if (extraction.product_type && extraction.product_type !== "UNKNOWN") contextScore += 0.3;
+    if (extraction.situation?.budget?.max || extraction.situation?.budget?.min) contextScore += 0.1;
+    if (extraction.extracted_memory) contextScore += 0.2;
 
-    if (REFINEMENT_INTENTS.includes(extraction.intent)) {
-      mvcMet = true; // Always bypass for existing pool refinements
-    } else if (extraction.intent === "GIFTING" && (extraction.situation.recipient !== "UNKNOWN" || extraction.situation.occasion !== "UNKNOWN")) {
-      mvcMet = true;
-    } else if (["SHOPPING", "BROWSING"].includes(extraction.intent) && extraction.product_type !== "UNKNOWN") {
-      mvcMet = true;
-    } else if (extraction.intent === "REORDER") {
-      mvcMet = true;
-    } else if (extraction.intent === "SMALL_TALK" || extraction.intent === "UNKNOWN" || extraction.intent === "COMPLAINT" || extraction.intent === "EXPLORATION") {
-      mvcMet = true; // Don't block non-shopping flows
-    }
+    const mvcMet = contextScore >= 0.4;
+    const searchMode = (extraction.product_type && extraction.product_type !== "UNKNOWN") ? "PRECISE" : "EXPLORATORY";
 
     // Rule 3: The LLM flagged missing info, but we only block if programmatic MVC is NOT met AND search is NOT sufficient
     if (extraction.missingInfo?.isMissingCriticalInfo && !mvcMet && !isSearchSufficient) {
@@ -76,10 +72,18 @@ export class ContextConfidenceEngine {
       reason = "needs_refinement";
     }
 
+    // Explicit bypass for Refinement intents
+    const REFINEMENT_INTENTS = ["PRICE_REFINEMENT", "PREFERENCE_CORRECTION", "REORDER"];
+    if (REFINEMENT_INTENTS.includes(extraction.intent) || ["SMALL_TALK", "UNKNOWN", "COMPLAINT"].includes(extraction.intent)) {
+       ready = true;
+       reason = "bypassed_for_intent";
+    }
+
     const result: ConfidenceResult = {
       confidence,
       recommendationReady: ready,
-      reason
+      reason,
+      searchMode
     };
 
     return { result, trace: trace.end(result, confidence, ready ? "Context is confident enough to proceed" : `Failed confidence check: ${reason}`) };

@@ -10,6 +10,7 @@ import { getPurchaseHistory, searchPurchases } from "@/lib/services/purchaseHist
 import { getOrCreateJourney, updateJourneyStages } from "@/lib/services/shoppingJourneyService";
 import { validateProducts, LifecycleLog } from "@/lib/recommendationValidator";
 import { createClient } from "@/lib/supabase/server";
+import { FALLBACK_USER_ID } from "@/lib/db";
 import {
     mcpSearchProducts,
     mcpTrackOrder,
@@ -41,6 +42,249 @@ const openai = new OpenAI({
 });
 
 import { KAPPY_PERSONA_INSTRUCTION } from "@/lib/masterPrompt";
+import { DetectedPersona } from "@/lib/intelligence/state/sessionSnapshot";
+
+interface CachedVocabulary {
+    singlish: string[];
+    tanglish: string[];
+}
+
+let vocabCache: CachedVocabulary | null = null;
+let lastVocabFetchTime = 0;
+const CACHE_TTL = 15 * 60 * 1000; // 15 minutes
+
+async function fetchVocabularyCached(): Promise<CachedVocabulary> {
+    const now = Date.now();
+    if (vocabCache && (now - lastVocabFetchTime < CACHE_TTL)) {
+        return vocabCache;
+    }
+
+    const defaultSinglish = [
+        "machan", "machang", "ado", "hari", "eka", "mama", "mata", "aiyo", "ane", "patta", 
+        "ela", "ne", "one", "karanna", "tiyenawa", "tiyenawada", "puluwanda", "ayya", "kohomada", 
+        "heta", "balapamu", "mokakda", "puluwan", "apita", "yako", "ow", "nehe",
+        "nangi", "malli", "salli", "nenda", "kella", "kolla", "badu", "wade", "wada", "mokak", "kiyanna", "epa", "ganna"
+    ];
+    const defaultTanglish = [
+        "machan", "machang",
+        "macha", "da", "daa", "thala", "evlo", "romba", "nanba", "sari", "illa", "enna", "ena", "amma ku", 
+        "venum", "naalaikku", "deliver aaguma", "budget kammiya", "paakalama", "sollunga", 
+        "pannuven", "kaakalam", "irukku", "iruku", "thane", "vaanginoam", "paakattuma", "kammiya",
+        "vanakam", "vanakkam", "saamaan", "maapley", "maapleyy", "maaplay", "maaplai", "ithu", 
+        "akkama", "thambi", "kaasu", "ponnu", "paiyan", "irukka", "illai", "kuda", "kooda", "pannunga", "vaanga",
+        "vaangalam", "vaanganum", "pudikum", "varuthu", "avanukku", "ku", "enda"
+    ];
+
+    try {
+        const { createClient } = await import("@/lib/supabase/server");
+        const supabase = await createClient();
+        const { data, error } = await supabase
+            .from("kappy_vocabulary")
+            .select("word, language_family");
+
+        if (error || !data || data.length === 0) {
+            console.warn("[Vocabulary Cache] Failed to load from database, using hardcoded fallback. Error:", error?.message);
+            vocabCache = { singlish: defaultSinglish, tanglish: defaultTanglish };
+        } else {
+            const singlish: string[] = [];
+            const tanglish: string[] = [];
+            data.forEach((row: any) => {
+                if (row.language_family === 'singlish') {
+                    singlish.push(row.word.toLowerCase());
+                } else if (row.language_family === 'tanglish') {
+                    tanglish.push(row.word.toLowerCase());
+                }
+            });
+            vocabCache = { singlish, tanglish };
+            console.log(`[Vocabulary Cache] Loaded ${singlish.length} Singlish and ${tanglish.length} Tanglish words from database.`);
+        }
+    } catch (err: any) {
+        console.error("[Vocabulary Cache] Exception during database fetch, using fallbacks:", err.message);
+        vocabCache = { singlish: defaultSinglish, tanglish: defaultTanglish };
+    }
+
+    lastVocabFetchTime = now;
+    return vocabCache;
+}
+
+let lexiconCache: string | null = null;
+let lastLexiconFetchTime = 0;
+const LEXICON_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+async function fetchCommunityLexiconCached(): Promise<string> {
+    const now = Date.now();
+    if (lexiconCache !== null && (now - lastLexiconFetchTime < LEXICON_CACHE_TTL)) {
+        return lexiconCache;
+    }
+
+    try {
+        const { createClient } = await import("@/lib/supabase/server");
+        const supabase = await createClient();
+        const { data, error } = await supabase
+            .from("kappy_community_lexicon")
+            .select("slang_word, standard_english")
+            .eq("status", "APPROVED");
+
+        if (!error && data && data.length > 0) {
+            lexiconCache = data.map(r => `${r.slang_word} -> ${r.standard_english}`).join(", ");
+        } else {
+            lexiconCache = "";
+        }
+    } catch (err) {
+        console.error("[Community Lexicon] Exception fetching approved lexicon:", err);
+        lexiconCache = "";
+    }
+
+    lastLexiconFetchTime = now;
+    return lexiconCache;
+}
+
+async function detectPersonaFromMessage(msg: string): Promise<DetectedPersona> {
+    const msgLower = msg.toLowerCase();
+    const hasSinhalaUnicode = /[\u0D80-\u0DFF]/.test(msg);
+    const hasTamilUnicode = /[\u0B80-\u0BFF]/.test(msg);
+
+    const vocab = await fetchVocabularyCached();
+    const singlishWords = vocab.singlish;
+    const tanglishWords = vocab.tanglish;
+
+    const words = msgLower.split(/\s+/).map(w => w.replace(/[^a-zA-Z0-9\u0D80-\u0DFF\u0B80-\u0BFF]/g, "")).filter(Boolean);
+
+    let singlishScore = 0;
+    let tanglishScore = 0;
+
+    words.forEach(w => {
+        if (singlishWords.includes(w)) {
+            singlishScore++;
+        }
+        if (tanglishWords.includes(w)) {
+            tanglishScore++;
+        }
+    });
+
+    if (msgLower.includes("amma ta") || msgLower.includes("deliver karanna") || msgLower.includes("gift ekak")) {
+        singlishScore += 2;
+    }
+    if (msgLower.includes("amma ku") || msgLower.includes("deliver aaguma") || msgLower.includes("gift venum")) {
+        tanglishScore += 2;
+    }
+
+    const hasSinglish = singlishScore > 0 && singlishScore >= tanglishScore;
+    const hasTanglish = tanglishScore > 0 && tanglishScore > singlishScore;
+
+    let primaryLanguage: 'English' | 'Singlish' | 'Tanglish' | 'Tamil' | 'Sinhala' | 'Mixed English + Tamil' | 'Mixed English + Singlish' = "English";
+    let scriptType: 'roman' | 'unicode_sinhala' | 'unicode_tamil' = "roman";
+    let mixingRatio = 0.0;
+
+    const englishVerbsAndPreps = ["show", "buy", "find", "get", "need", "want", "like", "love", "for", "to", "in", "on", "at", "please", "could", "would", "is", "are", "am"];
+    const hasEnglishStructure = words.some(w => englishVerbsAndPreps.includes(w));
+
+    if (hasSinhalaUnicode) {
+        primaryLanguage = "Sinhala";
+        scriptType = "unicode_sinhala";
+        const englishWordCount = (msg.match(/[a-zA-Z]+/g) || []).length;
+        const totalWords = words.length;
+        if (englishWordCount > 0 && totalWords > 0) {
+            mixingRatio = englishWordCount / totalWords;
+        }
+    } else if (hasTamilUnicode) {
+        primaryLanguage = "Tamil";
+        scriptType = "unicode_tamil";
+        const englishWordCount = (msg.match(/[a-zA-Z]+/g) || []).length;
+        const totalWords = words.length;
+        if (englishWordCount > 0 && totalWords > 0) {
+            mixingRatio = englishWordCount / totalWords;
+        }
+    } else if (hasSinglish) {
+        const englishWordCount = words.filter(w => !singlishWords.includes(w) && !["a", "an", "the", "for", "to", "in", "is", "it", "of", "my", "need", "gift", "birthday", "she", "he", "they"].includes(w)).length;
+        const totalWords = words.length;
+        mixingRatio = totalWords > 0 ? (totalWords - englishWordCount) / totalWords : 0.0;
+        
+        if (hasEnglishStructure && mixingRatio < 0.8) {
+            primaryLanguage = "Mixed English + Singlish";
+        } else {
+            primaryLanguage = "Singlish";
+        }
+    } else if (hasTanglish) {
+        const englishWordCount = words.filter(w => !tanglishWords.includes(w) && !["a", "an", "the", "for", "to", "in", "is", "it", "of", "my", "need", "gift", "birthday", "she", "he", "they"].includes(w)).length;
+        const totalWords = words.length;
+        mixingRatio = totalWords > 0 ? (totalWords - englishWordCount) / totalWords : 0.0;
+        
+        if (hasEnglishStructure && mixingRatio < 0.8) {
+            primaryLanguage = "Mixed English + Tamil";
+        } else {
+            primaryLanguage = "Tanglish";
+        }
+    } else {
+        primaryLanguage = "English";
+        scriptType = "roman";
+        mixingRatio = 0.0;
+    }
+
+    // Formality level
+    let formality: 'formal' | 'casual' | 'very_casual' = "casual";
+    const formalKeywords = ["please", "would", "could", "assistance", "regards", "dear", "recommend", "options", "purchase", "available", "delivery"];
+    const informalKeywords = ["hey", "yo", "machan", "ado", "macha", "bro", "watsup", "whats", "gimme", "wanna", "gonna", "idk", "asap", "enna", "panra", "macha", "thala"];
+
+    const formalScore = words.filter(w => formalKeywords.includes(w)).length;
+    const informalScore = words.filter(w => informalKeywords.includes(w)).length;
+
+    if (formalScore > informalScore && formalScore > 0) {
+        formality = "formal";
+    } else if (informalScore > formalScore || msgLower.includes("machan") || msgLower.includes("ado") || msgLower.includes("macha") || msgLower.includes("bro")) {
+        formality = "very_casual";
+    }
+
+    // Energy level
+    let energy: 'high' | 'medium' | 'low' = "medium";
+    const exclamationCount = (msg.match(/!/g) || []).length;
+    const emojiCount = (msg.match(/[\uD800-\uDBFF][\uDC00-\uDFFF]|\p{Emoji_Presentation}/gu) || []).length;
+    const capsCount = (msg.match(/\b[A-Z]{3,}\b/g) || []).length;
+
+    if (exclamationCount > 1 || emojiCount > 2 || capsCount > 1 || msg.includes("ASAP") || msg.includes("TODAY")) {
+        energy = "high";
+    } else if (msg.length < 20 && exclamationCount === 0 && emojiCount === 0) {
+        energy = "low";
+    }
+
+    // Tone Type & Emotional / Sarcastic Detection
+    let tone: 'polite' | 'funny' | 'sarcastic' | 'urgent' | 'confused' | 'friendly' | 'playful' | 'serious' = "friendly";
+
+    const sadStressedKeywords = ["cry", "crying", "sad", "stressed", "sorry", "guilty", "apology", "apologize", "angry", "fight", "broke", "expensive", "cheaper"];
+    const sarcasticKeywords = ["wallet is crying", "life become", "judge me", " savior", " crime", "angry for 3 days"];
+    const urgentKeywords = ["urgent", "emergency", "asap", "today", "now", "immediately", "quick"];
+    const confusedKeywords = ["don't know", "not sure", "help me", "no idea", "confused", "what to get", "any ideas"];
+    const funnyKeywords = ["haha", "hehe", "lol", "joke", "funny"];
+
+    if (sarcasticKeywords.some(k => msgLower.includes(k))) {
+        tone = "sarcastic";
+    } else if (confusedKeywords.some(k => msgLower.includes(k))) {
+        tone = "confused";
+    } else if (urgentKeywords.some(k => msgLower.includes(k))) {
+        tone = "urgent";
+    } else if (sadStressedKeywords.some(k => msgLower.includes(k))) {
+        tone = "serious";
+    } else if (funnyKeywords.some(k => msgLower.includes(k))) {
+        tone = "funny";
+    } else if (formality === "formal") {
+        tone = "polite";
+    } else if (formality === "very_casual") {
+        tone = "playful";
+    }
+
+    // Slang detected
+    const detected_slang = words.filter(w => [...singlishWords, ...tanglishWords].includes(w));
+
+    return {
+        primary_language: primaryLanguage,
+        script_type: scriptType,
+        formality,
+        energy,
+        tone,
+        mixing_ratio: parseFloat(mixingRatio.toFixed(2)),
+        detected_slang
+    };
+}
 
 export async function POST(request: Request) {
     let requestBody: any = {};
@@ -60,7 +304,7 @@ export async function POST(request: Request) {
     const traceStartTime = Date.now();
 
     const supabase = await createClient();
-    let userId = "00000000-0000-0000-0000-000000000000";
+    let userId = FALLBACK_USER_ID;
     let userName = "friend";
     try {
         const { data: { user } } = await supabase.auth.getUser();
@@ -108,7 +352,7 @@ async function processPostRequest(
     isSampled: boolean
 ) {
     const sessionTraces: any[] = [];
-    const { message, history } = requestBody;
+    const { message, history, godModeFilters } = requestBody;
 
     try {
         const { CircuitBreaker } = await import("@/lib/intelligence/services/circuitBreaker");
@@ -194,9 +438,10 @@ async function processPostRequest(
         // 2. Apply Decay
         const decayedMemories = resolvedMemories.map(m => MemoryDecayEngine.applyDecay(m));
 
-        // 3. Rank Relevance based on extracted context
-        const contextType = "GENERAL"; // Simple mapping, could be expanded
-        const relevanceResult = MemoryRelevanceEngine.rankMemories(message, decayedMemories, contextType);
+        // 3. Rank Relevance — auto-classify context from message (GIFT / REORDER / TRACKING / etc.)
+        // Combine both conversation memories AND preference records so both are ranked
+        const allMemoryItems = [...decayedMemories, ...rawPreferences];
+        const relevanceResult = MemoryRelevanceEngine.rankMemories(message, allMemoryItems);
 
         // Map relevant memories to Context Tags using Presentation Layer
         let activeContextTags = relevanceResult.relevantMemories.map(m => {
@@ -204,9 +449,9 @@ async function processPostRequest(
             return `${rendered.category}: ${rendered.text}`;
         });
 
-        // Log memory usage for God Mode
+        // Log memory usage for God Mode — cover both memories and preferences
         const { LearningEvidenceService } = await import("@/lib/intelligence/observability/godmode/learningEvidenceService");
-        decayedMemories.forEach(m => {
+        allMemoryItems.forEach(m => {
             const isUsed = relevanceResult.relevantMemories.some(rm => rm.id === m.id);
             const rendered = MemoryPresentationLayer.renderMemory(m);
             const memoryText = rendered.text;
@@ -216,6 +461,7 @@ async function processPostRequest(
                 isUsed ? "Confidence score meets relevance threshold" : "Low semantic alignment with query"
             );
         });
+
 
         const memoryTrace = await TraceCollector.logExecution(
             traceId,
@@ -231,6 +477,13 @@ async function processPostRequest(
             circuitState === "DEGRADED" ? "DEGRADED" : "HEALTHY"
         );
         sessionTraces.push(memoryTrace);
+
+        const { GodTelemetryService } = await import("@/lib/intelligence/observability/godmode/telemetryService");
+        GodTelemetryService.emit("MEMORY", "COMPLETED", {
+            loadedCount: rawMemories.length,
+            selectedCount: relevanceResult.relevantMemories.length,
+            confidence: relevanceResult.relevantMemories.length > 0 ? 0.9 : 0
+        });
 
         // Run through Profile Normalizer Gateway
         const { normalizeUserContext } = await import("@/lib/intelligence/normalization/profileNormalizer");
@@ -273,10 +526,66 @@ async function processPostRequest(
             generateConversationTitle(userId, activeSessionId, message).catch(console.error);
         }
 
+        // Load snapshot earlier for pre-intent parsing and overrides
+        const { SessionSnapshotEngine } = await import("@/lib/intelligence/state/sessionSnapshot");
+        let snapshot = await SessionSnapshotEngine.loadSnapshot(activeSessionId);
+
+        const { PreIntentParser } = await import("@/lib/intelligence/normalization/preIntentParser");
+        const lastAssistantMessage = history && Array.isArray(history) && history.length > 0
+            ? [...history].reverse().find((h: any) => h.role === "assistant")?.content || null
+            : null;
+        const preIntentResult = PreIntentParser.parse(message, history || [], lastAssistantMessage);
+
+        // Normalize pre-classified intents
+        if (preIntentResult.intent) {
+            const intentUpper = preIntentResult.intent.toUpperCase();
+            if (intentUpper.startsWith("GIFT_") || intentUpper.endsWith("_GIFT") || intentUpper.startsWith("RECIPIENT_")) {
+                preIntentResult.intent = "GIFTING";
+            } else if (intentUpper.endsWith("_SHOPPING") || intentUpper.endsWith("_PURCHASE") || intentUpper.includes("BUDGET")) {
+                preIntentResult.intent = "SHOPPING";
+            }
+        }
+
         // 2. INTELLIGENCE ENGINE (V1)
-        const { IntelligenceOrchestrator } = await import("@/lib/intelligence/orchestrator/intelligenceOrchestrator");
-        const orchestrator = new IntelligenceOrchestrator();
-        const intelligence = await orchestrator.processRequest(userId, message, history || []);
+        let intelligence: any;
+        if (preIntentResult.pre_classified && preIntentResult.fallback === "NONE") {
+            console.log(`[PreIntentParser] Pre-classified intent: ${preIntentResult.intent}`);
+            intelligence = {
+                readyForRecommendation: preIntentResult.intent === "PRODUCT_REJECTION" || preIntentResult.intent === "CHECKOUT_CONFIRM",
+                intelligenceScore: 90,
+                recommendationConfidence: 0.9,
+                intent: preIntentResult.intent,
+                situation: {
+                    recipient: preIntentResult.slots.recipient || snapshot?.recipient || "UNKNOWN",
+                    occasion: preIntentResult.slots.occasion || snapshot?.occasion || "UNKNOWN",
+                    budget: preIntentResult.slots.budget ? { max: preIntentResult.slots.budget } : (snapshot?.budget ? { max: snapshot.budget } : null)
+                },
+                psychology: { primaryTrigger: "neutral" },
+                product_type: snapshot?.searchSession?.query || "UNKNOWN",
+                mapped_category: "UNKNOWN",
+                preference_corrections: preIntentResult.intent === "PRODUCT_REJECTION" ? [{
+                    target: preIntentResult.slots.exclusion_target,
+                    negative: true,
+                    strength: "HARD"
+                }] : [],
+                price_refinement: null,
+                extracted_memory: null,
+                traces: [
+                    {
+                        engine: "PreIntentParser",
+                        latencyMs: 1,
+                        reasoning: `Matched via normalization dictionary with confident score.`,
+                        confidence: 0.95,
+                        inputs: { message }
+                    }
+                ]
+            };
+        } else {
+            const { IntelligenceOrchestrator } = await import("@/lib/intelligence/orchestrator/intelligenceOrchestrator");
+            const orchestrator = new IntelligenceOrchestrator();
+            const lexiconString = await fetchCommunityLexiconCached();
+            intelligence = await orchestrator.processRequest(userId, message, history || [], lexiconString);
+        }
 
         console.log("Kappy Intelligence Engine Plan:", JSON.stringify(intelligence, null, 2));
 
@@ -293,12 +602,18 @@ async function processPostRequest(
                 );
                 sessionTraces.push(loggedTrace);
             }
+
+            const { GodTelemetryService } = await import("@/lib/intelligence/observability/godmode/telemetryService");
+            GodTelemetryService.emit("UNDERSTANDING", "COMPLETED", {
+                intent: intelligence.intent,
+                confidence: intelligence.recommendationConfidence || 0.5
+            });
         }
 
         // Create a backward-compatible understandingPlan for legacy route.ts logic
         const understandingPlan: any = {
             intent: intelligence.intent,
-            is_shopping_request: ["SHOPPING", "GIFTING", "REORDER", "BROWSING", "PRICE_REFINEMENT", "PREFERENCE_CORRECTION", "EXPLORATION"].includes(intelligence.intent || ""),
+            is_shopping_request: ["SHOPPING", "GIFTING", "REORDER", "BROWSING", "PRICE_REFINEMENT", "PREFERENCE_CORRECTION", "EXPLORATION", "PRODUCT_REJECTION", "CHECKOUT_CONFIRM"].includes(intelligence.intent || ""),
             unsupported_domain: null,
             product_type: intelligence.product_type || "UNKNOWN",
             situation: intelligence.situation,
@@ -313,8 +628,53 @@ async function processPostRequest(
             needs_history: false,
             emotion: intelligence.psychology?.primaryTrigger || "neutral",
             mapped_category: intelligence.mapped_category || "UNKNOWN",
+            extracted_memory: intelligence.extracted_memory || null,
+            new_slang_detected: intelligence.new_slang_detected || null,
             intelligenceData: intelligence
         };
+
+        // --- Community Lexicon Pipeline: Auto-Save Slang ---
+        if (understandingPlan.new_slang_detected && understandingPlan.new_slang_detected.length > 0) {
+            try {
+                const { createClient } = await import("@/lib/supabase/server");
+                const supabaseClient = await createClient();
+                
+                for (const slang of understandingPlan.new_slang_detected) {
+                    const cleanSlang = slang.slang_word.toLowerCase().trim();
+                    const cleanEnglish = slang.standard_english.toLowerCase().trim();
+                    
+                    // Check if it already exists
+                    const { data: existing } = await supabaseClient
+                        .from('kappy_community_lexicon')
+                        .select('id, votes')
+                        .eq('slang_word', cleanSlang)
+                        .eq('standard_english', cleanEnglish)
+                        .single();
+
+                    if (existing) {
+                        const newVotes = existing.votes + 1;
+                        const newStatus = newVotes >= 7 ? 'APPROVED' : 'PENDING';
+                        await supabaseClient
+                            .from('kappy_community_lexicon')
+                            .update({ votes: newVotes, status: newStatus })
+                            .eq('id', existing.id);
+                    } else {
+                        await supabaseClient
+                            .from('kappy_community_lexicon')
+                            .insert({
+                                slang_word: cleanSlang,
+                                standard_english: cleanEnglish,
+                                category: slang.category,
+                                votes: 1,
+                                status: 'PENDING'
+                            });
+                    }
+                }
+            } catch (err) {
+                console.error("[Community Lexicon] Failed to save detected slang:", err);
+            }
+        }
+        // ---------------------------------------------------
 
         // Exploration Query Builder
         if (intelligence.intent === "EXPLORATION") {
@@ -349,7 +709,22 @@ async function processPostRequest(
 
         // Hardcoded Intent mapping for UI Quick Tap Chips
         const exactMessage = message.trim();
-        if (exactMessage === "🎂 Gift for someone") {
+        if (exactMessage.startsWith("Occasion:")) {
+             const occName = exactMessage.replace("Occasion:", "").trim().toLowerCase();
+             understandingPlan.intent = "GIFTING";
+             understandingPlan.is_shopping_request = true;
+             understandingPlan.product_type = "UNKNOWN";
+             understandingPlan.occasion = { type: occName, confidence: 1.0 };
+             if (understandingPlan.intelligenceData) {
+                 understandingPlan.intelligenceData.intent = "GIFTING";
+                 understandingPlan.intelligenceData.readyForRecommendation = true;
+                 understandingPlan.intelligenceData.searchMode = "EXPLORATORY";
+                 understandingPlan.intelligenceData.situation = {
+                     ...understandingPlan.intelligenceData.situation,
+                     occasion: occName
+                 };
+             }
+        } else if (exactMessage === "🎂 Gift for someone") {
              understandingPlan.intent = "GIFTING";
              understandingPlan.is_shopping_request = true;
              understandingPlan.product_type = "UNKNOWN";
@@ -374,18 +749,40 @@ async function processPostRequest(
             "hi", "hii", "hiii", "hello", "helloo", "hey", "heyy", "heyyy", "yo", "yoo", "sup", "whats up", "whatsup", "greetings", "kappy", "kapri",
             "morning", "afternoon", "evening", "good morning", "good afternoon", "good evening",
             // Sinhala
-            "ayubowan", "ayubowang", "subha dawasak", "subha udasanak", "subha sandhyawak", "machan", "macha", "ado", "kohomada", "sapa", "sapa kiyala", "koheda", "halow", "halo",
+            "ayubowan", "ayubowang", "subha dawasak", "subha udasanak", "subha sandhyawak", "machan", "machang", "ado", "kohomada", "sapa", "sapa kiyala", "koheda", "halow", "halo",
             // Tamil
-            "vanakkam", "vanakam", "வணக்கம்", "machi", "thala", "thalaiva", "sari", "enna machi", "nalla irukkingala", "nalama"
+            "vanakkam", "vanakam", "வணக்கம்", "machi", "thala", "thalaiva", "sari", "enna machi", "nalla irukkingala", "nalama",
+            "maapley", "maapleyy", "maaplay", "maaplai", "vanakamdaa", "vanakkamdaa", "vanakamda", "vanakkamda"
         ];
         
-        const cleanMessage = message.trim().toLowerCase().replace(/[^a-z0-9\s\u0B80-\u0BFF]/g, '');
-        const words = cleanMessage.split(/\s+/);
+        // Only treat terms of address and name calls as greetings if the message is short (<= 3 words)
+        const shortOnlyKeywords = ["machan", "machang", "macha", "thala", "thalaiva", "maapley", "maapleyy", "maaplay", "maaplai", "bro", "kappy", "kapri"];
         
-        const hasGreeting = words.some((w: string) => greetingKeywords.includes(w)) || 
-                            greetingKeywords.some((g: string) => cleanMessage === g || cleanMessage.startsWith(g + " "));
+        const cleanMessage = message.trim().toLowerCase().replace(/[^a-z0-9\s\u0B80-\u0BFF]/g, '');
+        const words = cleanMessage.split(/\s+/).filter(Boolean);
+        
+        const hasGreeting = words.some((w: string) => {
+            return greetingKeywords.some((g: string) => {
+                if (shortOnlyKeywords.includes(g) && words.length > 3) {
+                    return false;
+                }
+                if (g.length <= 3) {
+                    return w === g;
+                } else {
+                    return w.startsWith(g) || w.includes(g);
+                }
+            });
+        }) || greetingKeywords.some((g: string) => {
+            if (shortOnlyKeywords.includes(g) && words.length > 3) {
+                return false;
+            }
+            return cleanMessage === g || cleanMessage.startsWith(g + " ");
+        });
 
-        if (hasGreeting || understandingPlan.intent === "GREETING" || understandingPlan.intent === "SMALL_TALK") {
+        const isShoppingIntent = ["SHOPPING", "GIFTING", "REORDER", "BROWSING", "PRICE_REFINEMENT", "PREFERENCE_CORRECTION", "EXPLORATION", "PRODUCT_REJECTION", "CHECKOUT_CONFIRM"].includes(understandingPlan.intent || "");
+        const shouldForceGreeting = hasGreeting && (!isShoppingIntent || words.length <= 3);
+
+        if (shouldForceGreeting || understandingPlan.intent === "GREETING" || understandingPlan.intent === "SMALL_TALK") {
             understandingPlan.intent = "GREETING";
             understandingPlan.is_shopping_request = false;
             understandingPlan.product_type = "UNKNOWN";
@@ -454,27 +851,93 @@ async function processPostRequest(
 
         const { RuleEngine } = await import("@/lib/intelligence/orchestrator/ruleEngine");
         const { ActionRouter } = await import("@/lib/intelligence/orchestrator/actionRouter");
-        const { BypassRule, TrackOrderRule } = await import("@/lib/intelligence/orchestrator/rules/foundational/basicRules");
+        const { BypassRule, TrackOrderRule, CheckoutRule } = await import("@/lib/intelligence/orchestrator/rules/foundational/basicRules");
         const { ClarificationRule, SearchProductsRule, ShowMoreRule, ExploreCategoriesRule } = await import("@/lib/intelligence/orchestrator/rules/shopping/shoppingRules");
 
         const engine = new RuleEngine();
         engine.registerRule(new BypassRule());
         engine.registerRule(new TrackOrderRule());
+        engine.registerRule(new CheckoutRule());
         engine.registerRule(new ClarificationRule());
         engine.registerRule(new SearchProductsRule());
         engine.registerRule(new ShowMoreRule());
         engine.registerRule(new ExploreCategoriesRule());
 
-        const { SessionSnapshotEngine } = await import("@/lib/intelligence/state/sessionSnapshot");
         const { JourneyStateMachine } = await import("@/lib/intelligence/state/journeyStateMachine");
+        // snapshot is loaded earlier
 
-        let snapshot = await SessionSnapshotEngine.loadSnapshot(activeSessionId);
+        // Load session persona or initialize default
+        const previousPersona = snapshot?.sessionPersona || {
+            primary_language: "English",
+            script_type: "roman",
+            formality: "casual",
+            energy: "medium",
+            tone: "friendly",
+            mixing_ratio: 0.0,
+            detected_slang: []
+        };
+
+        // Detect current persona
+        const currentDetection = await detectPersonaFromMessage(message);
+
+        let mergedLanguage = currentDetection.primary_language;
+        let mergedScript = currentDetection.script_type;
+
+        const localLanguages = ["Singlish", "Tanglish", "Tamil", "Sinhala", "Mixed English + Tamil", "Mixed English + Singlish"];
+        if (localLanguages.includes(previousPersona.primary_language) && currentDetection.primary_language === "English") {
+            const hasSinhalaUnicode = /[\u0D80-\u0DFF]/.test(message);
+            const hasTamilUnicode = /[\u0B80-\u0BFF]/.test(message);
+            const singlishScore = (currentDetection as any).singlishScore || 0;
+            const tanglishScore = (currentDetection as any).tanglishScore || 0;
+            const cleanMessage = message.trim().toLowerCase().replace(/[^a-z0-9\s]/g, '');
+            const wordsCount = cleanMessage.split(/\s+/).filter(Boolean).length;
+
+            const hasZeroLocalWords = (singlishScore === 0 && tanglishScore === 0 && !hasSinhalaUnicode && !hasTamilUnicode);
+            const isLongMessage = wordsCount > 5;
+
+            if (isLongMessage && hasZeroLocalWords) {
+                // Switch to English!
+                mergedLanguage = "English";
+                mergedScript = "roman";
+                console.log("[Language Lock] User switched to full English. Releasing language lock.");
+            } else {
+                // Retain local language
+                mergedLanguage = previousPersona.primary_language;
+                mergedScript = previousPersona.script_type;
+                console.log(`[Language Lock] Preserving previous local language: ${mergedLanguage}`);
+            }
+        }
+
+        // Merge Strategy (Option A): Current wins
+        const activePersona: DetectedPersona = {
+            ...previousPersona,
+            ...currentDetection,
+            primary_language: mergedLanguage,
+            script_type: mergedScript,
+            detected_slang: Array.from(new Set([...(previousPersona.detected_slang || []), ...(currentDetection.detected_slang || [])]))
+        };
+
+        // Dirty Profile Updates for registered users (saves DB calls)
+        const languageChanged = activePersona.primary_language !== profile.primary_language;
+        const formalityChanged = activePersona.formality !== profile.communication_style;
+
+        if (userId !== "00000000-0000-0000-0000-000000000000" && (languageChanged || formalityChanged)) {
+            try {
+                await updateProfile(userId, {
+                    primary_language: activePersona.primary_language,
+                    communication_style: activePersona.formality
+                });
+            } catch (err) {
+                console.error("Failed to update user profile in Supabase:", err);
+            }
+        }
         
         // Phase 2: Merge previous turn variables when continuation is triggered
         const isContinuation = snapshot ? (
             understandingPlan.intent === "PRICE_REFINEMENT" ||
             understandingPlan.intent === "PREFERENCE_CORRECTION" ||
-            (["SHOPPING", "GIFTING", "REORDER", "BROWSING", "EXPLORATION"].includes(understandingPlan.intent) &&
+            understandingPlan.intent === "PRODUCT_REJECTION" ||
+            (["SHOPPING", "GIFTING", "REORDER", "BROWSING", "EXPLORATION", "PRODUCT_REJECTION"].includes(understandingPlan.intent) &&
              (understandingPlan.intelligenceData?.action === "SHOW_MORE" || 
               understandingPlan.intelligenceData?.action === "RECALL_PREVIOUS_RESULTS" || 
               message.toLowerCase().includes("show more") || 
@@ -493,7 +956,7 @@ async function processPostRequest(
         const isContextUpdate = snapshot ? (
             message.split(/\s+/).length <= 5 && 
             (snapshot.searchSession?.query || snapshot.recipient || snapshot.occasion) &&
-            (!understandingPlan.intent || understandingPlan.intent === "SHOPPING" || understandingPlan.intent === "UNKNOWN")
+            (!understandingPlan.intent || ["SHOPPING", "UNKNOWN", "GIFTING", "EXPLORATION"].includes(understandingPlan.intent))
         ) : false;
 
         if (snapshot && (isContinuation || isContextUpdate)) {
@@ -550,6 +1013,15 @@ async function processPostRequest(
 
         const { winner, trace } = engine.evaluate(ruleContext);
         let plan = ActionRouter.mapDecision(winner, understandingPlan.intent);
+        if (understandingPlan.intent === "PRODUCT_REJECTION") {
+            plan = {
+                route: "recommendation",
+                mcp_tool_needed: "kapruka_search_products",
+                mcp_search_query: snapshot?.searchSession?.query || "gifts",
+                shopping_stage: "SEARCH",
+                recommendation_mode: "FAST"
+            } as any;
+        }
         if (snapshot && !isContinuation && !isContextUpdate) {
             plan.is_context_override = true;
         }
@@ -559,12 +1031,11 @@ async function processPostRequest(
         // Prevent "hi" from triggering searches or recommendations.
         // ------------------------------------------------------------
         if (understandingPlan.intent === "GREETING") {
-            const confidence = understandingPlan.intelligenceData?.recommendationConfidence || 0;
             const state = stateMachine.getCurrentState() as any;
             
-            // If it's a greeting, confidence is low, and we aren't in the middle of a checkout
-            if (confidence < 0.8 && state !== "EXPECTING_SELECTION" && state !== "PROCEED_TO_CHECKOUT") {
-                console.log("[Guardrail] Greeting detected with low confidence/idle state. Bypassing shopping pipeline.");
+            // If it's a greeting, and we aren't in the middle of a checkout
+            if (state !== "EXPECTING_SELECTION" && state !== "PROCEED_TO_CHECKOUT") {
+                console.log("[Guardrail] Greeting detected in non-checkout state. Bypassing shopping pipeline.");
                 plan.route = "bypass";
                 plan.mcp_tool_needed = null;
                 understandingPlan.is_shopping_request = false;
@@ -676,6 +1147,14 @@ async function processPostRequest(
         const shouldClearParams = plan.is_context_override === true;
 
         // Save new state
+        let excludeCategories = snapshot?.searchSession?.filters?.excludeCategories || [];
+        if (understandingPlan.intent === "PRODUCT_REJECTION" && preIntentResult?.slots?.exclusion_target) {
+            const target = preIntentResult.slots.exclusion_target;
+            if (!excludeCategories.includes(target)) {
+                excludeCategories = [...excludeCategories, target];
+            }
+        }
+
         await SessionSnapshotEngine.saveSnapshot(activeSessionId, {
             journeyState: stateMachine.getCurrentState(),
             recipient: understandingPlan.extracted_recipient?.type || (shouldClearParams ? null : snapshot?.recipient),
@@ -688,7 +1167,10 @@ async function processPostRequest(
                 recipient: understandingPlan.extracted_recipient?.type || (shouldClearParams ? null : snapshot?.searchSession?.recipient),
                 occasion: understandingPlan.extracted_occasion?.type || (shouldClearParams ? null : snapshot?.searchSession?.occasion),
                 budget: understandingPlan.budget?.target || (shouldClearParams ? null : snapshot?.searchSession?.budget),
-                filters: shouldClearParams ? null : (understandingPlan.intelligenceData?.price_refinement || snapshot?.searchSession?.filters),
+                filters: shouldClearParams ? null : {
+                    ...(understandingPlan.intelligenceData?.price_refinement || snapshot?.searchSession?.filters || {}),
+                    excludeCategories
+                },
                 shownProducts: snapshot?.searchSession?.shownProducts || []
             },
             bundleSession: {
@@ -697,7 +1179,8 @@ async function processPostRequest(
                 recipient: understandingPlan.extracted_recipient?.type || (shouldClearParams ? null : snapshot?.bundleSession?.recipient),
                 occasion: understandingPlan.extracted_occasion?.type || (shouldClearParams ? null : snapshot?.bundleSession?.occasion),
                 budget: understandingPlan.budget?.target || (shouldClearParams ? null : snapshot?.bundleSession?.budget)
-            }
+            },
+            sessionPersona: activePersona
         });
 
         let toolResults: unknown = null;
@@ -822,6 +1305,22 @@ async function processPostRequest(
             let poolExhausted = false;
             let refinementHistory: string[] = [];
             let activeExclusions: { target: string; strength: string }[] = [];
+
+            if (plan.mcp_tool_needed === "kapruka_search_products") {
+                if (!plan.is_context_override) {
+                    const session = await getSearchSession(activeSessionId, userId);
+                    if (session) {
+                        activeExclusions = session.active_exclusions || [];
+                    }
+                }
+                if (understandingPlan.intent === "PRODUCT_REJECTION" && preIntentResult?.slots?.exclusion_target) {
+                    const target = preIntentResult.slots.exclusion_target;
+                    if (!activeExclusions.some(e => e.target === target)) {
+                        activeExclusions.push({ target, strength: "HARD" });
+                    }
+                }
+            }
+
             let activePriceRefinement: any = null;
             let viewedPages = 0;
             let displayedIdsSet = new Set<string>();
@@ -865,7 +1364,8 @@ async function processPostRequest(
                         plan.mcp_tool_needed = "kapruka_search_products";
                     }
                 } else {
-                    if ((understandingPlan.intent === "PREFERENCE_CORRECTION" || understandingPlan.intent === "PRICE_REFINEMENT") && (!understandingPlan.product_type || understandingPlan.product_type === "UNKNOWN" || understandingPlan.product_type === message)) {
+                    const isMissingContext = !understandingPlan.intelligenceData?.readyForRecommendation && (!understandingPlan.product_type || understandingPlan.product_type === "UNKNOWN");
+                    if ((understandingPlan.intent === "PREFERENCE_CORRECTION" || understandingPlan.intent === "PRICE_REFINEMENT") && isMissingContext) {
                         plan.mcp_tool_needed = null;
                         toolResults = {
                             clarification_needed: true,
@@ -876,7 +1376,12 @@ async function processPostRequest(
                     } else {
                         plan.mcp_tool_needed = "kapruka_search_products";
                         if (!plan.mcp_search_query) {
-                            plan.mcp_search_query = (understandingPlan.product_type && understandingPlan.product_type !== "UNKNOWN") ? understandingPlan.product_type : message;
+                            const components = [];
+                            if (understandingPlan.product_type && understandingPlan.product_type !== "UNKNOWN") components.push(understandingPlan.product_type);
+                            if (understandingPlan.situation?.recipient && understandingPlan.situation.recipient !== "UNKNOWN") components.push(understandingPlan.situation.recipient);
+                            if (understandingPlan.situation?.occasion && understandingPlan.situation.occasion !== "UNKNOWN") components.push(understandingPlan.situation.occasion);
+                            
+                            plan.mcp_search_query = components.length > 0 ? components.join(" ") : message;
                         }
                     }
                 }
@@ -890,7 +1395,14 @@ async function processPostRequest(
                 GodTelemetryService.emit("Retrieval Engine", "RUNNING", { query: plan.mcp_search_query });
 
                 const translatedQuery = await translateSearchQuery(plan.mcp_search_query || "");
-                let rawProducts = await mcpSearchProducts(translatedQuery, 40);
+                
+                console.log("\n================ [QUERY TRANSLATION PIPELINE] ================");
+                console.log(`1. Raw Input:      "${message}"`);
+                console.log(`2. LLM Extraction: "${plan.mcp_search_query || ""}"`);
+                console.log(`3. Final MCP Query: "${translatedQuery}"`);
+                console.log("==============================================================\n");
+
+                let rawProducts = await mcpSearchProducts(translatedQuery, 50);
                 
                 // Fallback items if MCP is offline / empty
                 if (!rawProducts || rawProducts.length === 0) {
@@ -937,7 +1449,13 @@ async function processPostRequest(
 
                 rawProductCount = rawProducts.length;
                 GodTelemetryService.emit("Retrieval Engine", "COMPLETED", { query: plan.mcp_search_query, count: rawProductCount });
-                ReplayService.recordStep("Product Retrieval", { query: plan.mcp_search_query }, { count: rawProductCount, products: rawProducts });
+                ReplayService.recordStep("Product Retrieval", { 
+                    query: plan.mcp_search_query,
+                    location: plan.delivery_city || understandingPlan.intelligenceData?.situation?.location || "Colombo",
+                    budget: understandingPlan.budget?.target,
+                    occasion: understandingPlan.occasion?.type,
+                    recipient: understandingPlan.recipient?.type
+                }, { count: rawProductCount, products: rawProducts });
 
                 // Map to standardized format using ProductAdapter
                 const mappedProducts: CanonicalProductV1[] = rawProducts.map(p => ProductAdapter.adaptMCPProduct(p));
@@ -949,7 +1467,8 @@ async function processPostRequest(
                         p.name,
                         "RETRIEVED",
                         "APPROVED",
-                        "Retrieved from Kapruka catalog search"
+                        "Retrieved from Kapruka catalog search",
+                        p.url
                     );
                 });
 
@@ -989,7 +1508,8 @@ async function processPostRequest(
                         budget: understandingPlan.budget?.target || undefined,
                         budgetNormalized: understandingPlan.budget || undefined,
                         searchQuery: plan.mcp_search_query || "",
-                        mappedCategory: understandingPlan.mapped_category || "UNKNOWN"
+                        mappedCategory: understandingPlan.mapped_category || "UNKNOWN",
+                        originalMessage: message
                     },
                     logs
                 );
@@ -1157,6 +1677,43 @@ async function processPostRequest(
                 const communityScores = await getV15CommunityScores(productIds, contextKey, recipientVal, occasionVal);
                 const trendScores = await getTrendScores(productIds);
 
+                // Find matching relationship for current recipient to avoid cross-relationship dislikes filter
+                const currentRecipientType = (understandingPlan.recipient?.type || "unknown").toLowerCase();
+                const activeRelationship = rawRelationships.find(
+                    (r: any) => r.relationship_type?.toLowerCase() === currentRecipientType
+                );
+
+                // Filter preferences and memories based on active recipient
+                const filteredPrefsAndMemories = [
+                    ...relevanceResult.relevantMemories.filter((m: any) => {
+                        // If it's a relationship memory, check if it matches the current recipient
+                        const keyLower = (m.key || "").toLowerCase();
+                        const isRelMemory = rawRelationships.some((r: any) => r.relationship_type?.toLowerCase() === keyLower);
+                        if (isRelMemory) {
+                            return keyLower === currentRecipientType;
+                        }
+                        return true; // Keep global user memories
+                    }),
+                    ...rawPreferences.filter((p: any) => {
+                        // Keep if it belongs to the active relationship, or is a global user preference (no relationship_id)
+                        if (p.relationship_id) {
+                            return activeRelationship && p.relationship_id === activeRelationship.id;
+                        }
+                        return true;
+                    })
+                ];
+
+                // Extract negative preference tags for hard product rejection
+                const negativeMemoryTags = filteredPrefsAndMemories
+                    .filter((m: any) => {
+                        const val = "interest" in m ? (m.interest || "") : (m.value || "");
+                        return val.toLowerCase().startsWith("dislikes:");
+                    })
+                    .map((m: any) => {
+                        const val = "interest" in m ? (m.interest || "") : (m.value || "");
+                        return val.replace(/^dislikes:\s*/i, "").trim();
+                    });
+
                 const rankingContext = {
                     searchQuery: plan.mcp_search_query || "",
                     situation: occasionVal,
@@ -1167,8 +1724,10 @@ async function processPostRequest(
                     trendScores,
                     queryIntelligence: queryIntelligenceData || [],
                     memoryTags: activeContextTags,
+                    negativeMemoryTags,
                     isBudgetExplicit: !!understandingPlan.budget?.target
                 };
+
 
                 rankingStartTime = Date.now();
                 GodTelemetryService.emit("Ranking Engine", "RUNNING", { candidatesCount: approvedMcpProducts.length });
@@ -1192,13 +1751,33 @@ async function processPostRequest(
 
                 // --- STAGE 3: SEMANTIC GARBAGE FILTER ---
                 const { runSemanticIrrelevanceFilter } = await import("@/lib/intelligence/recommendation/semanticFilter");
-                GodTelemetryService.emit("Semantic Filter", "RUNNING", { count: rankedCandidates.length });
-                const irrelevantIds = await runSemanticIrrelevanceFilter(
-                    plan.shopping_stage || plan.mcp_search_query || "",
-                    understandingPlan.mapped_category || "UNKNOWN",
-                    rankedCandidates.map(c => ({ id: c.productId, name: c.productData.name, category: c.productData.category }))
-                );
-                GodTelemetryService.emit("Semantic Filter", "COMPLETED", { irrelevantCount: irrelevantIds.length });
+                let irrelevantIds: string[] = [];
+                let semanticMetrics: any = null;
+                if (godModeFilters?.disableSemantic) {
+                    console.log("[God Mode] Semantic Filter bypassed by toggle.");
+                    GodTelemetryService.emit("Semantic Filter", "COMPLETED", { count: rankedCandidates.length });
+                } else {
+                    GodTelemetryService.emit("Semantic Filter", "RUNNING", { count: rankedCandidates.length });
+                    
+                    let specificityScore = 0;
+                    if (understandingPlan.product_type && understandingPlan.product_type !== "UNKNOWN") specificityScore += 0.5;
+                    if (understandingPlan.situation?.occasion && understandingPlan.situation.occasion !== "UNKNOWN") specificityScore += 0.3;
+                    if (understandingPlan.situation?.recipient && understandingPlan.situation.recipient !== "UNKNOWN") specificityScore += 0.2;
+                    
+                    const searchMode = understandingPlan.searchMode || "PRECISE";
+
+                    const filterResult = await runSemanticIrrelevanceFilter(
+                        plan.shopping_stage || plan.mcp_search_query || "",
+                        understandingPlan.mapped_category || "UNKNOWN",
+                        rankedCandidates.map(c => ({ id: c.productId, name: c.productData.name, category: c.productData.category })),
+                        searchMode,
+                        specificityScore
+                    );
+                    irrelevantIds = filterResult.irrelevantIds;
+                    semanticMetrics = filterResult.metrics;
+                    console.log("[Semantic Recall Metrics]", semanticMetrics);
+                    GodTelemetryService.emit("Semantic Filter", "COMPLETED", { irrelevantCount: irrelevantIds.length, metrics: semanticMetrics });
+                }
 
                 rankedCandidates.forEach((c: any) => {
                     const isIrrelevant = irrelevantIds.includes(c.productId);
@@ -1207,7 +1786,7 @@ async function processPostRequest(
                         c.productData.name,
                         "SEMANTIC_FILTER",
                         isIrrelevant ? "REJECTED" : "APPROVED",
-                        isIrrelevant ? "Filtered by LLM as semantically irrelevant to request" : "Validated as semantically relevant"
+                        isIrrelevant ? "Filtered by LLM as semantically irrelevant to request" : (godModeFilters?.disableSemantic ? "Bypassed via God Mode" : "Validated as semantically relevant")
                     );
                 });
 
@@ -1215,7 +1794,7 @@ async function processPostRequest(
                 semanticRemovedCount = rankedCandidates.length - finalSemanticRanked.length;
 
                 ReplayService.recordStep("Semantic Guardrail", 
-                    { inputCount: rankedCandidates.length, irrelevantIds }, 
+                    { inputCount: rankedCandidates.length, irrelevantIds, metrics: semanticMetrics }, 
                     { finalCount: finalSemanticRanked.length, finalProducts: finalSemanticRanked.map(c => ({ id: c.productId, name: c.productData.name, score: c.finalScore })) }
                 );
                 // ----------------------------------------
@@ -1731,14 +2310,28 @@ async function processPostRequest(
             });
 
             if (productsList.length === 0 && !(toolResults as any)?.clarification_needed) {
+                let failureReasons = "";
+                if (rawProductCount > 0) {
+                    const rejectionReasons = new Set<string>();
+                    logs.filter((l: any) => l.status === "rejected").forEach((l: any) => {
+                        if (l.reasons) l.reasons.forEach((r: string) => rejectionReasons.add(r));
+                    });
+                    
+                    if (rejectionReasons.size > 0) {
+                        failureReasons = `CRITICAL FAILURE: I found ${rawProductCount} items, but ALL of them were filtered out for these reasons: ${Array.from(rejectionReasons).join(", ")}. Do NOT suggest any products. Do NOT say 'Kappy's Pick'. You MUST tell the user exactly why the products were filtered out and suggest adjusting their search.`;
+                    } else {
+                        failureReasons = `CRITICAL FAILURE: I found ${rawProductCount} items, but they were all filtered out because they didn't match the strict constraints (like budget or safety). Do NOT suggest any products. Do NOT say 'Kappy's Pick'. Please ask the user to adjust their search.`;
+                    }
+                } else {
+                    failureReasons = `CRITICAL FAILURE: I couldn't find any products matching that request. Do NOT suggest any products. Do NOT say 'Kappy's Pick'. Please ask the user to try searching for something else.`;
+                }
+
                 toolExecutionTrace.status = "completed";
                 toolResults = {
                     status: "completed",
                     data: {
                         products: [],
-                        message: rawProductCount > 0 
-                            ? "I found some items, but they were all filtered out because they didn't match your preferences (e.g. they contained items you dislike). Could you try a different search?"
-                            : "I couldn't find any products matching that request. Could you try searching for something else?"
+                        message: failureReasons
                     }
                 };
             } else {
@@ -1869,32 +2462,36 @@ async function processPostRequest(
         // Earned Familiarity Engine: Determine relationship strength based on interactions
         const interactionCount = behaviorProfile.total_interactions + (history ? history.length : 0);
 
-        const msgLower = message.toLowerCase();
-        let detectedTone = understandingPlan.tone || "neutral";
-
-        const singlishKeywords = ["machan", "ado", "hari", "eka", "mama", "mata", "aiyo", "ane", "patta", "ela"];
-        const tanglishKeywords = ["macha", "da", "thala", "evlo", "romba", "nanba", "sari", "illa", "enna"];
-
-        // Exact word match to detect user's current slang usage
-        const toneWords = msgLower.split(/\s+/);
-        if (toneWords.some((w: string) => singlishKeywords.includes(w))) {
+        let detectedTone = activePersona.tone as string;
+        if (activePersona.primary_language === "Singlish" || activePersona.primary_language === "Mixed English + Singlish") {
             detectedTone = "singlish_casual";
-        } else if (toneWords.some((w: string) => tanglishKeywords.includes(w))) {
+        } else if (activePersona.primary_language === "Tanglish" || activePersona.primary_language === "Mixed English + Tamil") {
             detectedTone = "tanglish_casual";
         }
 
         // Generate a strict recipient-filtered context block to prevent memory bleed
         const filteredUserContextBlock = await buildUserContext(userId, understandingPlan.recipient?.type);
 
-        // Relationship-Strength Scoring
+        // Relationship-Strength Scoring (Overridden by Mirroring Precedence)
         const effectiveToneInstruction = `[RELATIONSHIP STRENGTH: ${interactionCount < 3 ? 'LOW' : (userTone.confidence < 0.6 ? 'MEDIUM' : 'HIGH')} (Interactions: ${interactionCount})]
-CRITICAL TONE RULES:
-- If LOW: START WITH A NEUTRAL, POLITE, AND PROFESSIONAL TONE. DO NOT use slang ("machan", "ado", "bro"). DO NOT use excessive emojis. You must earn familiarity. Example: "Hello! How can I help you today?"
-- If MEDIUM: You may use casual English and natural emojis. No heavy Sri Lankan slang yet.
-- If HIGH: You have earned familiarity. Mirror their exact style ("${userTone.tone}"). You may use "machan" or "ado" IF it matches their style.`;
+CRITICAL MIRRORING RULE:
+You MUST mirror the user's detected active style under all circumstances:
+- Primary Language: ${activePersona.primary_language}
+- Script type: ${activePersona.script_type}
+- Formality: ${activePersona.formality}
+- Energy: ${activePersona.energy}
+- Tone: ${activePersona.tone}
+Even if relationship strength is LOW, do NOT use a neutral/polite formal English tone unless they are speaking in that style. Mirroring has absolute precedence.`;
+
+        const replacedPersonaInstruction = KAPPY_PERSONA_INSTRUCTION
+            .replace("{USER_PRIMARY_LANGUAGE}", activePersona.primary_language)
+            .replace("{USER_SCRIPT}", activePersona.script_type)
+            .replace("{USER_FORMALITY}", activePersona.formality)
+            .replace("{USER_ENERGY}", activePersona.energy)
+            .replace("{USER_TONE}", activePersona.tone);
 
         const finalHumanizerPrompt = `
-${KAPPY_PERSONA_INSTRUCTION}
+${replacedPersonaInstruction}
 
 [USER BEHAVIORAL PROFILE & STAGE]
 - Name: ${userName}
@@ -1941,6 +2538,7 @@ Based on the Master System Prompt rules and the above context, generate Kapri's 
 5. EXPLICIT TOOL STATUS RULES:
    - If Tool Results status is "failed", DO NOT say "Let me check" or "Hang tight". Acknowledge the failure honestly ("I couldn't retrieve that information right now. Want me to try again?").
    - If Tool Results status is "cancelled", acknowledge the cancellation naturally ("No problem at all! What else can I help with?").
+   - If Tool Results indicate clarification_needed is true, you MUST ask the user the exact clarification message provided in the tool results, but ALWAYS translate it seamlessly into the exact language and tone the user is currently speaking in. Do NOT just output the English message if they are speaking Sinhala/Singlish or Tamil.
 6. If the active Recipient is "None specified" or "General", or if no specific recipient is determined, you MUST NOT assume, mention, or suggest any specific relationship or recipient (e.g., "mom", "mother", "girlfriend", "dad") in your text response. Keep references generic (e.g., "someone special" or "your recipient").
 ${understandingPlan.intent === "GREETING" ? `7. GREETING MODE RULES:
    - The user just greeted you. Keep it warm, casual, and friendly.
@@ -1954,7 +2552,12 @@ ${understandingPlan.intent === "GREETING" ? `7. GREETING MODE RULES:
 ` : (understandingPlan.intent === "EXPLORATION" ? `7. EXPLORATION MODE RULES:
    - The user doesn't know what they want. You have pulled some products to inspire them. Present them casually, not as definitive recommendations (e.g., 'Let me show you some things people love' or 'Here are some ideas to get you started').
    - Naturally ask the refinement/lead question below to narrow down their intent.
-` : "")}
+` : (understandingPlan.intent === "PRODUCT_REJECTION" ? `7. PRODUCT REJECTION RULES:
+   - The user rejected a category (e.g., flowers or mugs).
+   - Confirm that you've filtered out the rejected category (e.g., "Got it! No flowers. I've updated the list to show other options instead!").
+   - Keep it friendly, positive, and light.
+   - Present the updated list of recommendations naturally.
+` : ""))}
 ${understandingPlan.intent !== "GREETING" && understandingPlan.intelligenceData?.nextQuestion && understandingPlan.intelligenceData.nextQuestion !== "None" ? `8. PROGRESSIVE REFINEMENT RULE:
    - You MUST ask the following refinement question at the very end of your response after naturally introducing the products.
    - Refinement Question: "${understandingPlan.intelligenceData.nextQuestion}"` : (understandingPlan.intent === "GREETING" ? "" : `8. DO NOT ask any follow-up questions or clarification questions. Just introduce the products naturally.`)}
@@ -1989,22 +2592,122 @@ ${understandingPlan.intent !== "GREETING" && understandingPlan.intelligenceData?
         // Removed fallback to persistent memory if no active context is specified to prevent UI context bleed
         // activeContextTags should strictly contain relevant contextual memories
 
-        if (toolResults && ((toolResults as any).guardrail_triggered || (toolResults as any).clarification_needed)) {
+        const saveGodModeTrace = async () => {
+            try {
+                const capturedStore = godModeStorage.getStore();
+                if (capturedStore) {
+                    const supabaseClient = await createClient();
+                    
+                    // Compile confidence explanations
+                    const positive: string[] = [];
+                    const negative: string[] = [];
+                    if (understandingPlan.budget?.target) positive.push("Budget identified");
+                    else negative.push("Budget limit not set");
+                    
+                    if (understandingPlan.recipient?.type && understandingPlan.recipient.type !== "unknown") positive.push("Recipient identified");
+                    else negative.push("Recipient preferences unknown");
+                    
+                    if (understandingPlan.occasion?.type && understandingPlan.occasion.type !== "unknown") positive.push("Occasion identified");
+                    else negative.push("Occasion not specified");
+                    
+                    if (productsList && productsList.length > 0) positive.push("Candidate products matched successfully");
+                    else negative.push("No catalog matching products found");
+
+                    const confidenceExplanation = { positive, negative };
+
+                    // Compile session summary
+                    const sessionSummary = {
+                        intent: understandingPlan.intent || "unknown",
+                        recipient: understandingPlan.recipient?.type || "unknown",
+                        occasion: understandingPlan.occasion?.type || "unknown",
+                        budget: understandingPlan.budget?.target || null,
+                        evaluatedCount: rawProductCount || 0,
+                        filteredCount: (deduplicatedCount || 0) + (filteredCount || 0) + (semanticRemovedCount || 0),
+                        winningProductId: productsList[0]?.id || null,
+                        winningProductName: productsList[0]?.name || null,
+                        confidence: intelligence.recommendationConfidence || 0.5,
+                        durationMs: Date.now() - traceStartTime
+                    };
+
+                    const { LearningEvidenceService } = await import("@/lib/intelligence/observability/godmode/learningEvidenceService");
+                    const learningProfile = await LearningEvidenceService.getLearningProfile(userId);
+
+                    const { error: insertError } = await supabaseClient.from("godmode_traces").insert({
+                        trace_id: traceId,
+                        user_id: userId,
+                        telemetry_events: capturedStore.telemetryEvents,
+                        product_lifecycles: Object.values(capturedStore.productLifecycles),
+                        replay_steps: capturedStore.replaySteps,
+                        learning_profile: learningProfile,
+                        confidence_explanation: confidenceExplanation,
+                        session_summary: sessionSummary,
+                        engine_health: capturedStore.engineHealth
+                    });
+                    if (insertError) {
+                        import('fs').then(fs => fs.appendFileSync('telemetry_error.log', 'Insert Error: ' + JSON.stringify(insertError) + '\n'));
+                    }
+                }
+            } catch (telemetryError: any) {
+                console.error("Failed to persist God Mode telemetry:", telemetryError);
+                import('fs').then(fs => fs.appendFileSync('telemetry_error.log', telemetryError?.message + '\n' + JSON.stringify(telemetryError) + '\n'));
+            }
+        };
+
+        if (toolResults && (toolResults as any).guardrail_triggered) {
             const msg = (toolResults as any).message;
-            // Guardrails and Clarifications bypass the LLM
+            // Guardrails bypass the LLM
             // Phase 5: Judge Mode Integration
             const { JudgeAdapter } = await import("@/lib/intelligence/observability/judgeAdapter");
             const rawTraces = (global as any).currentTraces || [];
             const judgePayload = JudgeAdapter.compress(activeSessionId, rawTraces);
 
-            const data = new StreamData();
-            data.append({
-                activeMemories: [...dynamicContextTags, ...activeContextTags],
-                traceReport: { trace_id: traceId },
-                intelligenceTrace: intelligence?.traces || null,
-                judgeModeTrace: judgePayload
-            } as any);
-            data.close();
+            // Save persistent state asynchronously before bypassing stream
+            try {
+                await saveChatMessage(userId, activeSessionId, "assistant", msg, {
+                    intent: understandingPlan.intent,
+                    detected_tone: detectedTone,
+                    products_shown: 0,
+                    products_list: [],
+                    traceId: traceId,
+                    traceReport: { trace_id: traceId },
+                    intelligenceTrace: judgePayload || null,
+                    activeMemories: [...dynamicContextTags, ...activeContextTags]
+                });
+            } catch(e) { console.error("saveChatMessage err in bypass route", e); }
+
+            try {
+                await SessionSnapshotEngine.saveSnapshot(activeSessionId, {
+                    journeyState: stateMachine.getCurrentState(),
+                    recipient: understandingPlan.extracted_recipient?.type || (shouldClearParams ? null : snapshot?.recipient),
+                    occasion: understandingPlan.extracted_occasion?.type || (shouldClearParams ? null : snapshot?.occasion),
+                    budget: understandingPlan.budget?.target || (shouldClearParams ? null : snapshot?.budget),
+                    activeBundle: snapshot?.activeBundle || [],
+                    recommendedProducts: [],
+                    searchSession: {
+                        query: understandingPlan.product_type || (shouldClearParams ? null : snapshot?.searchSession?.query),
+                        recipient: understandingPlan.extracted_recipient?.type || (shouldClearParams ? null : snapshot?.searchSession?.recipient),
+                        occasion: understandingPlan.extracted_occasion?.type || (shouldClearParams ? null : snapshot?.searchSession?.occasion),
+                        budget: understandingPlan.budget?.target || (shouldClearParams ? null : snapshot?.searchSession?.budget),
+                        filters: shouldClearParams ? null : (understandingPlan.intelligenceData?.price_refinement || snapshot?.searchSession?.filters),
+                        shownProducts: []
+                    },
+                    bundleSession: {
+                        items: snapshot?.activeBundle || [],
+                        total: snapshot?.activeBundle?.reduce((acc: number, item: any) => acc + (item.price || 0), 0) || 0,
+                        recipient: understandingPlan.extracted_recipient?.type || (shouldClearParams ? null : snapshot?.bundleSession?.recipient),
+                        occasion: understandingPlan.extracted_occasion?.type || (shouldClearParams ? null : snapshot?.bundleSession?.occasion),
+                        budget: understandingPlan.budget?.target || (shouldClearParams ? null : snapshot?.bundleSession?.budget)
+                    },
+                    askedQuestions: [
+                        ...(snapshot?.askedQuestions || []),
+                        ...(winner?.action === "CLARIFY" && (winner as any).targetField ? [(winner as any).targetField] : [])
+                    ],
+                    sessionPersona: activePersona
+                });
+            } catch(e) { console.error("saveSnapshot err in bypass route", e); }
+
+            // Save God Mode telemetry before early return
+            await saveGodModeTrace();
 
             // We use a minified JSON response for the bypass message to trigger the fallback in ChatWindow
             return new NextResponse(JSON.stringify({
@@ -2053,15 +2756,50 @@ ${understandingPlan.intent !== "GREETING" && understandingPlan.intelligenceData?
 
         data.append(dataPayload);
 
-        const capturedStore = godModeStorage.getStore();
+        const { selectFewShots } = await import("@/lib/fewShotLibrary");
+        
+        // Only inject few-shots if the active persona's primary language is NOT English,
+        // AND there is some localized slang detected in the message or active persona history,
+        // or the message contains common Sri Lankan / local chat markers.
+        const isLocalized = activePersona.primary_language !== "English" && 
+                            ((activePersona.detected_slang && activePersona.detected_slang.length > 0) || 
+                             message.toLowerCase().includes("machan") || 
+                             message.toLowerCase().includes("macha") || 
+                             message.toLowerCase().includes("ado") || 
+                             message.toLowerCase().includes("aiyo") ||
+                             message.toLowerCase().includes("ane") ||
+                             message.toLowerCase().includes("patta") ||
+                             message.toLowerCase().includes("ela") ||
+                             message.toLowerCase().includes("hari"));
+
+        let fewShots: any[] = [];
+        if (isLocalized) {
+            fewShots = await selectFewShots(
+                message,
+                understandingPlan.intent || "SHOPPING",
+                activePersona.primary_language,
+                activePersona.tone,
+                understandingPlan.intelligenceData?.recommendationConfidence || 1.0,
+                history || []
+            );
+        }
+
+        const fewShotMessages: any[] = [];
+        for (const example of fewShots) {
+            fewShotMessages.push(
+                { role: "user", content: example.user },
+                { role: "assistant", content: example.assistant }
+            );
+        }
 
         const openaiClient = new OpenAI();
         const completion = await openaiClient.chat.completions.create({
             model: "gpt-4o-mini",
             messages: [
                 { role: "system", content: finalHumanizerPrompt },
-                { role: "user", content: "Provide the response." }
-            ],
+                ...fewShotMessages,
+                { role: "user", content: message }
+            ] as any,
             stream: true,
         });
 
@@ -2113,7 +2851,8 @@ ${understandingPlan.intent !== "GREETING" && understandingPlan.intelligenceData?
                         askedQuestions: [
                             ...(snapshot?.askedQuestions || []),
                             ...(winner?.action === "CLARIFY" && (winner as any).targetField ? [(winner as any).targetField] : [])
-                        ]
+                        ],
+                        sessionPersona: activePersona
                     });
                 } catch(e) { console.error("saveSnapshot err", e); }
 
@@ -2124,65 +2863,7 @@ ${understandingPlan.intent !== "GREETING" && understandingPlan.intelligenceData?
                 } catch(e) { console.error("updateUserTone err", e); }
 
                 // KAPPY GOD MODE TELEMETRY PERSISTENCE - Always persist telemetry
-                if (true) {
-                    try {
-                        if (capturedStore) {
-                            const supabaseClient = await createClient();
-                            
-                            // Compile confidence explanations
-                            const positive: string[] = [];
-                            const negative: string[] = [];
-                            if (understandingPlan.budget?.target) positive.push("Budget identified");
-                            else negative.push("Budget limit not set");
-                            
-                            if (understandingPlan.recipient?.type && understandingPlan.recipient.type !== "unknown") positive.push("Recipient identified");
-                            else negative.push("Recipient preferences unknown");
-                            
-                            if (understandingPlan.occasion?.type && understandingPlan.occasion.type !== "unknown") positive.push("Occasion identified");
-                            else negative.push("Occasion not specified");
-                            
-                            if (productsList && productsList.length > 0) positive.push("Candidate products matched successfully");
-                            else negative.push("No catalog matching products found");
-
-                            const confidenceExplanation = { positive, negative };
-
-                            // Compile session summary
-                            const sessionSummary = {
-                                intent: understandingPlan.intent || "unknown",
-                                recipient: understandingPlan.recipient?.type || "unknown",
-                                occasion: understandingPlan.occasion?.type || "unknown",
-                                budget: understandingPlan.budget?.target || null,
-                                evaluatedCount: rawProductCount || 0,
-                                filteredCount: (deduplicatedCount || 0) + (filteredCount || 0) + (semanticRemovedCount || 0),
-                                winningProductId: productsList[0]?.id || null,
-                                winningProductName: productsList[0]?.name || null,
-                                confidence: intelligence.recommendationConfidence || 0.5,
-                                durationMs: Date.now() - traceStartTime
-                            };
-
-                            const { LearningEvidenceService } = await import("@/lib/intelligence/observability/godmode/learningEvidenceService");
-                            const learningProfile = await LearningEvidenceService.getLearningProfile(userId);
-
-                            const { error: insertError } = await supabaseClient.from("godmode_traces").insert({
-                                trace_id: traceId,
-                                user_id: userId,
-                                telemetry_events: capturedStore.telemetryEvents,
-                                product_lifecycles: Object.values(capturedStore.productLifecycles),
-                                replay_steps: capturedStore.replaySteps,
-                                learning_profile: learningProfile,
-                                confidence_explanation: confidenceExplanation,
-                                session_summary: sessionSummary,
-                                engine_health: capturedStore.engineHealth
-                            });
-                            if (insertError) {
-                                import('fs').then(fs => fs.appendFileSync('telemetry_error.log', 'Insert Error: ' + JSON.stringify(insertError) + '\n'));
-                            }
-                        }
-                    } catch (telemetryError: any) {
-                        console.error("Failed to persist God Mode telemetry:", telemetryError);
-                        import('fs').then(fs => fs.appendFileSync('telemetry_error.log', telemetryError?.message + '\n' + JSON.stringify(telemetryError) + '\n'));
-                    }
-                }
+                await saveGodModeTrace();
 
                 data.close();
             }

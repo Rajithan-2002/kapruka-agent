@@ -95,3 +95,25 @@ export class BypassRule extends BaseRule {
         return this.noMatch("Intent requires orchestration (is a shopping/action intent)");
     }
 }
+
+export class CheckoutRule extends BaseRule {
+    name = "CheckoutRule";
+    category: RuleCategory = "shopping";
+    priority: RulePriority = "HIGH";
+    ruleVersion = "1.0.0";
+
+    evaluate(context: RuleContext): RuleResult {
+        const ue = context.understandingPlan;
+        if (ue.intent === 'CHECKOUT_CONFIRM') {
+            return {
+                matched: true,
+                priority: this.priority,
+                action: "CHECKOUT",
+                reason: "User confirmed checkout request",
+                confidence: 1.0,
+                trace: [`[${this.name}] Matched checkout confirmation intent.`]
+            };
+        }
+        return this.noMatch("Not a checkout confirmation intent.");
+    }
+}

@@ -7,11 +7,24 @@ interface MemoryVaultProps {
     relationships: any[];
     preferences: any[];
     activeMemories: string[];
-    onClose?: () => void;
 }
 
-export default function MemoryVault({ relationships, preferences, activeMemories, onClose }: MemoryVaultProps) {
+export default function MemoryVault({ relationships, preferences, activeMemories }: MemoryVaultProps) {
     const [highlightedPrefId, setHighlightedPrefId] = useState<string | null>(null);
+    const [deletedPrefIds, setDeletedPrefIds] = useState<Set<string>>(new Set());
+
+    const handleDeletePreference = async (prefId: string) => {
+        setDeletedPrefIds(prev => new Set([...prev, prefId]));
+        try {
+            await fetch('/api/relationships', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: "DELETE_PREFERENCE", preferenceId: prefId })
+            });
+        } catch (e) {
+            console.error("Failed to delete preference", e);
+        }
+    };
 
     // Extract active context from memories array
     const recipientMemory = activeMemories.find(m => m.toLowerCase().includes("recipient:"));
@@ -33,7 +46,7 @@ export default function MemoryVault({ relationships, preferences, activeMemories
         : null;
 
     const recipientPrefs = activeRel
-        ? preferences.filter(p => p.relationship_id === activeRel.id)
+        ? preferences.filter(p => p.relationship_id === activeRel.id && !deletedPrefIds.has(p.id))
         : [];
 
     // Trigger flash animation when a new preference is registered
@@ -49,7 +62,7 @@ export default function MemoryVault({ relationships, preferences, activeMemories
     }, [preferences.length]);
 
     return (
-        <div className="flex flex-col h-full bg-slate-900 text-slate-100 border-l border-slate-800 w-full md:w-[320px] shrink-0 overflow-y-auto font-sans relative shadow-xl">
+        <div className="flex flex-col bg-slate-900 text-slate-100 w-full max-w-full shrink-0 overflow-y-auto font-sans shadow-xl h-full absolute inset-0">
             {/* Header */}
             <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800 bg-slate-950/80 backdrop-blur-md sticky top-0 z-10">
                 <div className="flex items-center gap-2">
@@ -64,14 +77,6 @@ export default function MemoryVault({ relationships, preferences, activeMemories
                         <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Kappy cognitive context</p>
                     </div>
                 </div>
-                {onClose && (
-                    <button
-                        onClick={onClose}
-                        className="p-1 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-all cursor-pointer"
-                    >
-                        <X className="w-5 h-5" />
-                    </button>
-                )}
             </div>
 
             <div className="p-5 space-y-6">
@@ -152,11 +157,17 @@ export default function MemoryVault({ relationships, preferences, activeMemories
                                                     isNew
                                                         ? "text-white border-amber-400 animate-pulse-glow scale-105"
                                                         : isDislike
-                                                        ? "bg-rose-950/40 text-rose-300 border-rose-900/50 hover:bg-rose-900/30"
-                                                        : "bg-slate-950/50 text-slate-200 border-slate-800 hover:border-slate-700"
+                                                        ? "bg-rose-950/40 text-rose-300 border-rose-900/50 hover:bg-rose-900/30 group"
+                                                        : "bg-slate-950/50 text-slate-200 border-slate-800 hover:border-slate-700 group"
                                                 }`}
                                             >
                                                 {isDislike ? "⚠️" : "💖"} {pref.interest}
+                                                <button 
+                                                    onClick={() => handleDeletePreference(pref.id)}
+                                                    className="ml-1 opacity-0 group-hover:opacity-100 hover:text-rose-400 transition-opacity"
+                                                >
+                                                    <Trash2 className="w-3 h-3" />
+                                                </button>
                                             </span>
                                         );
                                     })}

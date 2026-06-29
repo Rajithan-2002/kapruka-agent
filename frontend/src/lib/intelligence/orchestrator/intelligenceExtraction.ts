@@ -25,9 +25,9 @@ const EXTRACTION_SCHEMA = {
       situation: {
         type: "object",
         properties: {
-          recipient: { type: "string", description: "Who is this for? e.g., 'father', 'wife', 'friend', 'self'. Output 'UNKNOWN' if not specified." },
+          recipient: { type: "string", description: "Who is this for? e.g., 'father', 'wife', 'friend', 'self'. MUST be translated to standard English (e.g. 'appachi' -> 'father', 'nangi' -> 'sister'). Output 'UNKNOWN' if not specified." },
           recipient_type: { type: "string", enum: ["FAMILY", "FRIEND", "ROMANTIC", "COLLEAGUE", "ACQUAINTANCE", "SELF", "UNKNOWN"] },
-          occasion: { type: "string", description: "Why are they buying this? e.g., 'birthday', 'anniversary', 'apology'. Output 'UNKNOWN' if not specified." },
+          occasion: { type: "string", description: "Why are they buying this? e.g., 'birthday', 'anniversary'. MUST be translated to standard English. Output 'UNKNOWN' if not specified." },
           urgency: { type: "string", enum: ["LOW", "MEDIUM", "HIGH", "IMMEDIATE"] },
           budget: {
             type: "object",
@@ -68,7 +68,7 @@ const EXTRACTION_SCHEMA = {
       },
       mapped_category: {
         type: "string",
-        enum: ["GROCERY", "CAKES", "TOYS", "FASHION", "FLOWERS", "SWEETS", "FRUITS", "ELECTRONICS", "GIFTS", "STATIONERY", "UNKNOWN"],
+        enum: ["CAKES", "CHOCOLATES", "CLOTHING", "ELECTRONICS", "FLOWERS", "GROCERY", "JEWELRY_WATCHES", "PERSONALIZED_GIFTS", "FASHION_SHOES", "HEALTH_WELLNESS", "TOYS", "HAMPERS", "BOOKS", "UNKNOWN"],
         description: "Map the user's natural query to an official Kapruka root category. If unsure, output 'UNKNOWN'."
       },
       interaction_mode: {
@@ -129,6 +129,19 @@ const EXTRACTION_SCHEMA = {
         },
         required: ["category"]
       },
+      new_slang_detected: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            slang_word: { type: "string", description: "The local slang word used (e.g., 'loku', 'appachi', 'arakku')" },
+            standard_english: { type: "string", description: "The standard English meaning (e.g., 'older brother', 'father', 'liquor')" },
+            category: { type: "string", enum: ["RELATIONSHIP", "PRODUCT", "OCCASION", "OTHER"] }
+          },
+          required: ["slang_word", "standard_english", "category"]
+        },
+        description: "If the user explicitly teaches or corrects you on a local slang word (e.g. 'loku means brother', 'appachi is father'), extract it here so the community can learn it."
+      },
       missingInfo: {
         type: "object",
         properties: {
@@ -163,7 +176,8 @@ const EXTRACTION_SCHEMA = {
 export async function runIntelligenceExtraction(
   userMessage: string,
   chatHistory: { role: string; content: string }[],
-  tracer: IntelligenceTracer
+  tracer: IntelligenceTracer,
+  lexiconString: string = ""
 ): Promise<ExtractionResult> {
   const trace = tracer.startTrace('IntelligenceExtraction', { userMessage });
 
@@ -174,6 +188,7 @@ export async function runIntelligenceExtraction(
         content: `You are the Kapruka Intelligence Engine. Your job is to deeply understand the user's commerce request.
 You must extract the Intent, Situation, Psychology, and any Missing Information.
 Always analyze if the user is gifting or buying for themselves.
+${lexiconString ? `\nAPPROVED COMMUNITY LEXICON (Use these mappings):\n${lexiconString}\n` : ""}
 
 If the user is venting, complaining about life, or sharing emotional/social situations (e.g. "my girlfriend is angry with me", "I failed my exam", "I had a big fight with my wife", "I am so stressed"), classify the intent as one of:
 - SOCIAL (general social updates or relationships)
@@ -197,15 +212,14 @@ If the request is a continuation request (e.g., "show more", "more products", "c
 - Set isMissingCriticalInfo to false since the shopping context is already established in history.
 CRITICAL: Always map the request to the most appropriate 'mapped_category'. Example: 'healthy snacks' -> 'GROCERY'. 'birthday cake' -> 'CAKES'.
 Minimum Viable Context (MVC) Rules:
-- Gifting: MVC is met if Recipient OR Occasion is present.
+- Gifting: MVC is met if Recipient OR Occasion is present. CRITICAL EXCEPTION: If the product is highly age-dependent (e.g., "toys", "clothing for child/daughter/son") and age is NOT mentioned, MVC is NOT met. Set isMissingCriticalInfo to true and ask for the age. If the recipient is a generic title (e.g., "professor", "doctor", "boss", "colleague") and gender is NOT mentioned, MVC is NOT met. Set isMissingCriticalInfo to true and ask for their gender or preferences.
 - Food/Grocery/Shopping: MVC is met if Product Type is present.
 - Reorder: MVC is met if Reorder Intent is present.
-- Preference Correction: MVC is met.
-- Price Refinement: MVC is met.
-- Social/Venting (SOCIAL, EMOTIONAL_SUPPORT, FRUSTRATION, LIFE_EVENT): MVC is met.
+- Preference Correction / Price Refinement / Social: MVC is met.
 If MVC is not met, mark isMissingCriticalInfo as true.
 Do NOT hallucinate information. If something is unknown, mark it as UNKNOWN.
-CRITICAL RULE: "Earn the right to ask questions". Do NOT ask for Recipient or Occasion if the user just asks for "juice" or a simple product. Only ask questions if they materially improve the recommendation.`
+CRITICAL RULE ON SLANG: If the user explicitly teaches you a new word, slang, or translation (e.g. "zorp means cake", "appachi is father"), you MUST extract it into the 'new_slang_detected' array. Do NOT place vocabulary lessons into 'extracted_memory'.
+CRITICAL RULE: "Earn the right to ask questions". Do NOT ask for Recipient or Occasion if the user just asks for "juice" or a simple product. Only ask questions if they materially improve the recommendation (like age for toys, or gender for a professor).`
       },
       ...chatHistory.map(msg => ({ role: msg.role, content: msg.content || "" })),
       { role: "user", content: userMessage || "" }

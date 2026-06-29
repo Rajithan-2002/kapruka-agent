@@ -1,0 +1,162 @@
+[
+  {
+    "id": "IS189",
+    "input": "aduwen",
+    "normalized": "cheap",
+    "language": "Singlish",
+    "category": "budget",
+    "confidence": "HIGH",
+    "implied_intent": "LOW_BUDGET",
+    "implied_flag": null,
+    "usage_example": "aduwen monawahari thiyenawada",
+    "aliases": [
+      "aduwen",
+      "aduwenma"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS190",
+    "input": "ganan ne",
+    "normalized": "not expensive",
+    "language": "Singlish",
+    "category": "budget",
+    "confidence": "HIGH",
+    "implied_intent": "LOW_BUDGET",
+    "implied_flag": null,
+    "usage_example": "ganan ne ekak one",
+    "aliases": [
+      "ganan ne",
+      "ganan nehe"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS191",
+    "input": "podi budget ekak",
+    "normalized": "small budget",
+    "language": "Singlish",
+    "category": "budget",
+    "confidence": "HIGH",
+    "implied_intent": "LOW_BUDGET",
+    "implied_flag": null,
+    "usage_example": "podi budget ekak thamai",
+    "aliases": [
+      "podi budget",
+      "small budget"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS192",
+    "input": "under 5000",
+    "normalized": "budget under 5000 LKR",
+    "language": "English",
+    "category": "budget",
+    "confidence": "HIGH",
+    "implied_intent": "BUDGET_CONSTRAINED",
+    "implied_flag": null,
+    "usage_example": "under 5000 thiyena gift",
+    "aliases": [
+      "under 5000",
+      "below 5000"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS193",
+    "input": "budget tight",
+    "normalized": "limited budget",
+    "language": "English",
+    "category": "budget",
+    "confidence": "HIGH",
+    "implied_intent": "BUDGET_CONSTRAINED",
+    "implied_flag": null,
+    "usage_example": "budget tight bn",
+    "aliases": [
+      "budget tight",
+      "tight budget"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS194",
+    "input": "mila kammiya",
+    "normalized": "low price",
+    "language": "Tanglish",
+    "category": "budget",
+    "confidence": "HIGH",
+    "implied_intent": "LOW_BUDGET",
+    "implied_flag": null,
+    "usage_example": "mila kammiya irukkanum",
+    "aliases": [
+      "mila kammiya",
+      "kammiya"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS195",
+    "input": "cheap one",
+    "normalized": "budget item",
+    "language": "Mixed",
+    "category": "budget",
+    "confidence": "HIGH",
+    "implied_intent": "LOW_BUDGET",
+    "implied_flag": null,
+    "usage_example": "cheap one show karanna",
+    "aliases": [
+      "cheap one",
+      "cheap ekak"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS196",
+    "input": "ganan",
+    "normalized": "expensive",
+    "language": "Singlish",
+    "category": "budget",
+    "confidence": "HIGH",
+    "implied_intent": "PREMIUM_BUDGET",
+    "implied_flag": null,
+    "usage_example": "eka ganan wadi",
+    "aliases": [
+      "ganan",
+      "ganan wadi"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS197",
+    "input": "premium ekak",
+    "normalized": "premium product",
+    "language": "Mixed",
+    "category": "budget",
+    "confidence": "HIGH",
+    "implied_intent": "PREMIUM_BUDGET",
+    "implied_flag": null,
+    "usage_example": "premium ekak pennanna",
+    "aliases": [
+      "premium ekak",
+      "premium one"
+    ],
+    "do_not_confuse_with": null
+  },
+  {
+    "id": "IS198",
+    "input": "no budget issue",
+    "normalized": "budget not important",
+    "language": "English",
+    "category": "budget",
+    "confidence": "HIGH",
+    "implied_intent": "PREMIUM_BUDGET",
+    "implied_flag": null,
+    "usage_example": "no budget issue",
+    "aliases": [
+      "no budget issue",
+      "budget not a problem"
+    ],
+    "do_not_confuse_with": null
+  }
+]

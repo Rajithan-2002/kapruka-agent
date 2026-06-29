@@ -23,6 +23,16 @@ export interface BundleSession {
     budget?: string | number;
 }
 
+export interface DetectedPersona {
+    primary_language: 'English' | 'Singlish' | 'Tanglish' | 'Tamil' | 'Sinhala' | 'Mixed English + Tamil' | 'Mixed English + Singlish';
+    script_type: 'roman' | 'unicode_sinhala' | 'unicode_tamil';
+    formality: 'formal' | 'casual' | 'very_casual';
+    energy: 'high' | 'medium' | 'low';
+    tone: 'polite' | 'funny' | 'sarcastic' | 'urgent' | 'confused' | 'friendly' | 'playful' | 'serious';
+    mixing_ratio: number; // 0.0 pure English -> 1.0 pure local
+    detected_slang: string[];
+}
+
 export interface SessionSnapshot {
     sessionId: string;
     journeyState: JourneyState;
@@ -34,6 +44,7 @@ export interface SessionSnapshot {
     searchSession?: SearchSession;
     bundleSession?: BundleSession;
     askedQuestions?: string[];
+    sessionPersona?: DetectedPersona;
     lastUpdated: string;
 }
 
@@ -73,7 +84,7 @@ export class SessionSnapshotEngine {
                     .upsert({
                         id: `jou-${sessionId}`,
                         session_id: sessionId,
-                        user_id: "00000000-0000-0000-0000-000000000000", // Fallback guest user ID
+                        user_id: "22222222-2222-2222-2222-222222222222", // Fallback guest user ID
                         journey_state: updated,
                         updated_at: new Date().toISOString()
                     }, { onConflict: "id" });
