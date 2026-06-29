@@ -36,9 +36,9 @@ export async function POST(request: Request) {
         try {
             const orderItems = payload.cart.map((item: any) => `Product ID: ${item.product_id} (Qty: ${item.quantity || 1})`);
             await addOrder({
-                orderNumber: result.order_ref,
+                orderNumber: result?.order_ref || "UNKNOWN",
                 recipientName: payload.recipient?.name || "Recipient",
-                totalAmount: result.summary?.grand_total || result.summary?.items_total || 0,
+                totalAmount: result?.summary?.grand_total || result?.summary?.items_total || 0,
                 items: orderItems
             });
             console.log("[Checkout API] Order logged to Kappy database.");
@@ -49,9 +49,9 @@ export async function POST(request: Request) {
 
         return NextResponse.json({
             success: true,
-            checkout_url: result.checkout_url,
-            order_ref: result.order_ref,
-            summary: result.summary
+            checkout_url: result?.checkout_url,
+            order_ref: result?.order_ref,
+            summary: result?.summary
         });
 
     } catch (error: any) {
