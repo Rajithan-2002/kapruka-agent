@@ -1612,47 +1612,30 @@ export default function ChatWindow() {
           {activeTab === "chat" && (
             <div className="flex flex-1 bg-slate-50 relative overflow-hidden min-h-0">
               <div className="flex-1 flex flex-col relative min-h-0">
-                {/* Situation Timeline */}
-                <div className="shrink-0 bg-white border-b border-slate-100 px-4 py-2.5 flex items-center justify-between overflow-x-auto scrollbar-none gap-2">
-                  {[
-                    { key: "recipient", label: "Recipient", icon: "👩" },
-                    { key: "occasion", label: "Occasion", icon: "🎂" },
-                    { key: "budget", label: "Budget", icon: "💰" },
-                    { key: "products", label: "Products", icon: "🛍️" },
-                    { key: "checkout", label: "Checkout", icon: "💳" }
-                  ].map((step, idx, arr) => {
-                    const status = getStepStatus(step.key as any);
+                {/* Active Context Bar */}
+                {sessionSnapshot && (
+                  (() => {
+                    const activeFilters = [
+                      sessionSnapshot.recipient && sessionSnapshot.recipient !== "UNKNOWN" ? { label: "Recipient", value: sessionSnapshot.recipient, icon: "👩" } : null,
+                      sessionSnapshot.occasion && sessionSnapshot.occasion !== "UNKNOWN" ? { label: "Occasion", value: sessionSnapshot.occasion, icon: "🎂" } : null,
+                      sessionSnapshot.budget && sessionSnapshot.budget !== 0 && sessionSnapshot.budget !== "UNKNOWN" ? { label: "Budget", value: `LKR ${sessionSnapshot.budget.toLocaleString()}`, icon: "💰" } : null,
+                    ].filter(Boolean);
+
+                    if (activeFilters.length === 0) return null;
+
                     return (
-                      <React.Fragment key={step.key}>
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold border transition-all ${
-                            status === "completed" 
-                              ? "bg-emerald-500 border-emerald-500 text-white shadow-sm"
-                              : status === "active"
-                              ? "bg-violet-650 border-violet-650 text-white shadow-sm animate-pulse"
-                              : "bg-slate-50 border-slate-200 text-slate-400"
-                          }`}>
-                            {status === "completed" ? "✓" : step.icon}
+                      <div className="shrink-0 bg-white border-b border-slate-100 px-4 py-3 flex items-center gap-3 overflow-x-auto scrollbar-none">
+                        <span className="text-xs font-bold text-slate-400 uppercase tracking-wider mr-1">Active Context:</span>
+                        {activeFilters.map((filter: any, idx: number) => (
+                          <div key={idx} className="flex items-center gap-1.5 px-3 py-1.5 bg-violet-50 text-violet-750 border border-violet-100 rounded-full shrink-0 shadow-sm">
+                            <span className="text-sm">{filter.icon}</span>
+                            <span className="text-xs font-medium">{filter.value}</span>
                           </div>
-                          <span className={`text-[11px] font-black tracking-tight ${
-                            status === "completed"
-                              ? "text-emerald-600 font-bold"
-                              : status === "active"
-                              ? "text-violet-750 font-black"
-                              : "text-slate-400"
-                          }`}>
-                            {step.label}
-                          </span>
-                        </div>
-                        {idx < arr.length - 1 && (
-                          <div className={`h-0.5 w-4 md:w-8 shrink-0 ${
-                            status === "completed" ? "bg-emerald-300" : "bg-slate-100"
-                          }`} />
-                        )}
-                      </React.Fragment>
+                        ))}
+                      </div>
                     );
-                  })}
-                </div>
+                  })()
+                )}
 
                 <div ref={scrollContainerRef} className="flex-1 overflow-y-auto px-5 py-5 space-y-4 scrollbar-thin">
                   {messages.length === 0 ? (
@@ -1705,58 +1688,6 @@ export default function ChatWindow() {
                 {/* Bottom Active Context Section removed per request */}
 
 
-                {/* Dynamic Sticky Action Bar */}
-                <div className="shrink-0 bg-white border-t border-slate-100 px-4 py-2 overflow-x-auto scrollbar-none flex gap-2">
-                  {!sessionSnapshot || (!sessionSnapshot.recipient && !sessionSnapshot.occasion && !sessionSnapshot.budget) ? (
-                    [
-                      { label: "🎂 Birthday Gift", query: "Help me find a Birthday gift" },
-                      { label: "❤️ Anniversary", query: "Anniversary gift packages" },
-                      { label: "📦 Track Order", query: "Track order status" },
-                      { label: "🛍️ Browse Cakes", query: "Browse delicious cakes" }
-                    ].map((btn, idx) => (
-                      <button
-                        key={idx}
-                        onClick={() => handleSendMessage(btn.query)}
-                        className="shrink-0 px-3 py-1.5 bg-slate-50 hover:bg-slate-100 hover:text-slate-900 border border-slate-200 text-slate-600 rounded-full text-xs font-bold transition-all active:scale-95 cursor-pointer"
-                      >
-                        {btn.label}
-                      </button>
-                    ))
-                  ) : (
-                    [
-                      sessionSnapshot.recipient && sessionSnapshot.recipient !== "UNKNOWN" && {
-                        label: `👩 Recipient: ${sessionSnapshot.recipient}`,
-                        query: `gifting for ${sessionSnapshot.recipient}`
-                      },
-                      sessionSnapshot.occasion && sessionSnapshot.occasion !== "UNKNOWN" && {
-                        label: `🎂 Occasion: ${sessionSnapshot.occasion}`,
-                        query: `gifting occasion ${sessionSnapshot.occasion}`
-                      },
-                      sessionSnapshot.budget && sessionSnapshot.budget !== 0 && sessionSnapshot.budget !== "UNKNOWN" && {
-                        label: `💰 Budget: LKR ${sessionSnapshot.budget.toLocaleString()}`,
-                        query: `budget ${sessionSnapshot.budget}`
-                      },
-                      {
-                        label: "🚚 Colombo Delivery Routes",
-                        query: "Check delivery timelines for Colombo"
-                      },
-                      {
-                        label: "✨ Optimize hampering",
-                        query: "optimize hamper selection"
-                      }
-                    ]
-                      .filter(Boolean)
-                      .map((btn: any, idx) => (
-                        <button
-                          key={idx}
-                          onClick={() => handleSendMessage(btn.query)}
-                          className="shrink-0 px-3 py-1.5 bg-violet-50 hover:bg-violet-100 hover:text-violet-900 border border-violet-200 text-violet-750 rounded-full text-xs font-black transition-all active:scale-95 cursor-pointer"
-                        >
-                          {btn.label}
-                        </button>
-                      ))
-                  )}
-                </div>
 
                 {/* Chat tab bottom input */}
                 <div className="p-4 bg-white border-t border-slate-100">
