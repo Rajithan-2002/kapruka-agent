@@ -53,7 +53,7 @@ async function testEngines() {
         console.log("Raw String:", raw);
         console.log("Normalized:", normalized);
         
-        const intentResult = PreIntentParser.analyze(raw);
+        const intentResult = PreIntentParser.parse(raw, []);
         console.log("PreIntentParser Result:", JSON.stringify(intentResult, null, 2));
     } catch (e: any) {
         console.error("❌ Normalization Exception:", e.message);
