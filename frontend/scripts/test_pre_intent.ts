@@ -1,4 +1,4 @@
-import { PreIntentParser } from "../src/lib/intelligence/normalization/preIntentParser";
+import { PreIntentParser } from "@/lib/intelligence/normalization/preIntentParser";
 
 interface TestCase {
     name: string;

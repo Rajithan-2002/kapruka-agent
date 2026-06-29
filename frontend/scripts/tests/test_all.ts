@@ -1,7 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { ScenarioTestRunner } from "./src/lib/intelligence/testing/scenarioTestRunner";
+import { ScenarioTestRunner } from "@/lib/intelligence/testing/scenarioTestRunner";
 
 const supabaseUrl = process.env.SUPABASE_URL || "";
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY || "";

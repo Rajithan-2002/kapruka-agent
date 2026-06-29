@@ -1,4 +1,4 @@
-import { mcpCreateOrder } from "./src/lib/mcp";
+import { mcpCreateOrder } from "@/lib/mcp";
 
 async function testMCP() {
   console.log("Testing kapruka_create_order via HTTP...");

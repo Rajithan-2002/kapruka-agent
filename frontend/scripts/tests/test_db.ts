@@ -1,4 +1,4 @@
-import { supabase } from "./src/lib/db";
+import { supabase } from "@/lib/db";
 
 async function checkTable(tableName: string) {
     if (!supabase) {

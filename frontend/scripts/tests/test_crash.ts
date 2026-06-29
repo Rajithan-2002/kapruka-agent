@@ -17,7 +17,7 @@ if (fs.existsSync(envPath)) {
 
 async function run() {
     try {
-        const { IntelligenceOrchestrator } = await import("./src/lib/intelligence/orchestrator/intelligenceOrchestrator");
+        const { IntelligenceOrchestrator } = await import("@/lib/intelligence/orchestrator/intelligenceOrchestrator");
         const orchestrator = new IntelligenceOrchestrator();
         console.log("Processing Turn 2...");
         const result = await orchestrator.processRequest(

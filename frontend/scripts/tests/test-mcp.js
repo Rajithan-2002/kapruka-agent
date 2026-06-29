@@ -1,4 +1,4 @@
-import { mcpCreateOrder } from "./src/lib/mcp.js";
+import { mcpCreateOrder } from "@/lib/mcp.js";
 // Wait, mcp.ts is in typescript. I will just use fetch to call the MCP server directly.
 
 async function testMCP() {

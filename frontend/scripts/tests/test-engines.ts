@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { normalizeText, PreIntentParser } from "./src/lib/intelligence/normalization/preIntentParser";
+import { normalizeText, PreIntentParser } from "@/lib/intelligence/normalization/preIntentParser";
 import * as fs from "fs";
 import * as path from "path";
 

@@ -1,4 +1,4 @@
-import { mcpSearchProducts } from "./src/lib/mcp";
+import { mcpSearchProducts } from "@/lib/mcp";
 
 async function testSearch() {
     console.log("Testing Kapruka MCP Search...");
