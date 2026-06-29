@@ -100,12 +100,12 @@ function checkHariContext(lastAssistantMessage: string | null): boolean {
     const msgLower = lastAssistantMessage.toLowerCase();
 
     const isOrderSummary = msgLower.includes("total") ||
-                           msgLower.includes("order") ||
-                           msgLower.includes("summary") ||
-                           msgLower.includes("rs.") ||
-                           msgLower.includes("lkr") ||
-                           msgLower.includes("checkout") ||
-                           msgLower.includes("confirm");
+        msgLower.includes("order") ||
+        msgLower.includes("summary") ||
+        msgLower.includes("rs.") ||
+        msgLower.includes("lkr") ||
+        msgLower.includes("checkout") ||
+        msgLower.includes("confirm");
 
     const isYesNo = msgLower.includes("?") && (
         msgLower.includes("puluwanda") ||
@@ -168,7 +168,7 @@ function detectDynamicExclusion(normalizedMessage: string): string | null {
 export class PreIntentParser {
     public static parse(message: string, history: any[], lastAssistantMessage: string | null = null): PreIntentResult {
         const normalizedMsg = normalizeText(message);
-        
+
         // Dynamic product rejection check
         const dynamicExclusion = detectDynamicExclusion(normalizedMsg);
         if (dynamicExclusion) {
@@ -219,9 +219,9 @@ export class PreIntentParser {
                 const start = index;
                 const end = index + normPhrase.length;
 
-                const overlap = consumedSpans.some(span => 
-                    (start >= span.start && start < span.end) || 
-                    (end > span.start && end <= span.end) || 
+                const overlap = consumedSpans.some(span =>
+                    (start >= span.start && start < span.end) ||
+                    (end > span.start && end <= span.end) ||
                     (span.start >= start && span.start < end)
                 );
 
@@ -252,19 +252,19 @@ export class PreIntentParser {
 
         for (const match of matches) {
             const entry = match.entry;
-            
+
             // Check context gating
             if (entry.context_required) {
                 let contextPassed = false;
                 const phraseLower = match.matchedPhrase.toLowerCase();
-                
+
                 if (phraseLower.includes("hari")) {
                     contextPassed = checkHariContext(lastAssistantMessage);
                 } else if (
-                    phraseLower.includes("illai") || 
-                    phraseLower.includes("ne") || 
-                    phraseLower.includes("nehe") || 
-                    phraseLower.includes("nae") || 
+                    phraseLower.includes("illai") ||
+                    phraseLower.includes("ne") ||
+                    phraseLower.includes("nehe") ||
+                    phraseLower.includes("nae") ||
                     phraseLower.includes("nahe")
                 ) {
                     contextPassed = checkNoContext(message, match.matchedPhrase);

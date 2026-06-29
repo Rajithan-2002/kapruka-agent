@@ -1,4 +1,4 @@
-import { mcpSearchProducts } from "./src/lib/mcp";
+import { mcpSearchProducts } from "@/lib/mcp";
 
 async function test() {
     try {

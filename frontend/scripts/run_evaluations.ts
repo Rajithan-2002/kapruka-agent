@@ -1,4 +1,4 @@
-import { IntelligenceOrchestrator } from "../src/lib/intelligence/orchestrator/intelligenceOrchestrator";
+import { IntelligenceOrchestrator } from "@/lib/intelligence/orchestrator/intelligenceOrchestrator";
 
 const SCENARIOS = [
     { name: "Father's Day Gift", input: "Need Father's Day gift under 5000", expectedIntent: "GIFTING" },

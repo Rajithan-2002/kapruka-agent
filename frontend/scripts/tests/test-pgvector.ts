@@ -1,4 +1,4 @@
-import { selectFewShots } from "./src/lib/fewShotLibrary";
+import { selectFewShots } from "@/lib/fewShotLibrary";
 
 async function testPgVector() {
     console.log("Testing PGVector dynamic caching...");

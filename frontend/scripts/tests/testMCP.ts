@@ -1,4 +1,4 @@
-import { mcpTrackOrder } from "./src/lib/mcp";
+import { mcpTrackOrder } from "@/lib/mcp";
 
 async function main() {
   try {
