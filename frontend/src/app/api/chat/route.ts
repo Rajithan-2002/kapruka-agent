@@ -2792,16 +2792,57 @@ ${understandingPlan.intent !== "GREETING" && understandingPlan.intelligenceData?
             );
         }
 
-        const openaiClient = new OpenAI();
-        const completion = await openaiClient.chat.completions.create({
-            model: "gpt-4o-mini",
-            messages: [
-                { role: "system", content: finalHumanizerPrompt },
-                ...fewShotMessages,
-                { role: "user", content: message }
-            ] as any,
-            stream: true,
-        });
+        let completion: any;
+        try {
+            const openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+            completion = await openaiClient.chat.completions.create({
+                model: "gpt-4o-mini",
+                messages: [
+                    { role: "system", content: finalHumanizerPrompt },
+                    ...fewShotMessages,
+                    { role: "user", content: message }
+                ] as any,
+                stream: true,
+            });
+        } catch (llmErr) {
+            console.error("OpenAI Humanizer LLM error inside route.ts:", llmErr);
+            const fallbackMsg = productsList.length > 0 
+                ? "Here are the top options matching your request!" 
+                : ((toolResults as any)?.message || "Here is what I found for your request.");
+            
+            try {
+                await saveChatMessage(userId, activeSessionId, "assistant", fallbackMsg, {
+                    intent: understandingPlan.intent,
+                    detected_tone: detectedTone,
+                    products_shown: productsList.length,
+                    products_list: productsList,
+                    isAllRequested,
+                    initialVisibleCount,
+                    tracking_data: trackingData,
+                    bundleOptions: bundleOptions,
+                    giftMessages: giftMessageOptions,
+                    traceId: traceId || traceReport?.trace_id,
+                    traceReport: traceReport || { trace_id: traceId },
+                    intelligenceTrace: judgePayload || null,
+                    activeMemories: [...dynamicContextTags, ...activeContextTags]
+                });
+            } catch (_) {}
+
+            await saveGodModeTrace().catch(() => {});
+
+            return new NextResponse(JSON.stringify({
+                role: "assistant",
+                content: fallbackMsg,
+                products: productsList.length > 0 ? productsList : undefined,
+                activeMemories: [...dynamicContextTags, ...activeContextTags],
+                traceReport: traceReport || { trace_id: traceId },
+                intelligenceTrace: intelligence?.traces || null,
+                judgeModeTrace: judgePayload,
+                followUpSuggestions: followUpSuggestions?.length ? followUpSuggestions : ((toolResults as any)?.followUpSuggestions || null)
+            }), {
+                headers: { "Content-Type": "application/json" }
+            });
+        }
 
         const stream = OpenAIStream(completion, {
             onCompletion: async (text) => {
