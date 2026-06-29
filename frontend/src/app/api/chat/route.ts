@@ -956,7 +956,7 @@ async function processPostRequest(
         const isContextUpdate = snapshot ? (
             message.split(/\s+/).length <= 5 && 
             (snapshot.searchSession?.query || snapshot.recipient || snapshot.occasion) &&
-            (!understandingPlan.intent || understandingPlan.intent === "SHOPPING" || understandingPlan.intent === "UNKNOWN")
+            (!understandingPlan.intent || ["SHOPPING", "UNKNOWN", "GIFTING", "EXPLORATION"].includes(understandingPlan.intent))
         ) : false;
 
         if (snapshot && (isContinuation || isContextUpdate)) {
@@ -2310,14 +2310,28 @@ async function processPostRequest(
             });
 
             if (productsList.length === 0 && !(toolResults as any)?.clarification_needed) {
+                let failureReasons = "";
+                if (rawProductCount > 0) {
+                    const rejectionReasons = new Set<string>();
+                    logs.filter((l: any) => l.status === "rejected").forEach((l: any) => {
+                        if (l.reasons) l.reasons.forEach((r: string) => rejectionReasons.add(r));
+                    });
+                    
+                    if (rejectionReasons.size > 0) {
+                        failureReasons = `CRITICAL FAILURE: I found ${rawProductCount} items, but ALL of them were filtered out for these reasons: ${Array.from(rejectionReasons).join(", ")}. Do NOT suggest any products. Do NOT say 'Kappy's Pick'. You MUST tell the user exactly why the products were filtered out and suggest adjusting their search.`;
+                    } else {
+                        failureReasons = `CRITICAL FAILURE: I found ${rawProductCount} items, but they were all filtered out because they didn't match the strict constraints (like budget or safety). Do NOT suggest any products. Do NOT say 'Kappy's Pick'. Please ask the user to adjust their search.`;
+                    }
+                } else {
+                    failureReasons = `CRITICAL FAILURE: I couldn't find any products matching that request. Do NOT suggest any products. Do NOT say 'Kappy's Pick'. Please ask the user to try searching for something else.`;
+                }
+
                 toolExecutionTrace.status = "completed";
                 toolResults = {
                     status: "completed",
                     data: {
                         products: [],
-                        message: rawProductCount > 0 
-                            ? "I found some items, but they were all filtered out because they didn't match your preferences (e.g. they contained items you dislike). Could you try a different search?"
-                            : "I couldn't find any products matching that request. Could you try searching for something else?"
+                        message: failureReasons
                     }
                 };
             } else {
