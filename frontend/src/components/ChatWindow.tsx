@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import ChatInput from "./ChatInput";
 import ChatMessage, { Message, Product } from "./ChatMessage";
+import ProductCard from "./ProductCard";
 import { createClient } from "@/lib/supabase/client";
 import { User } from "@supabase/supabase-js";
 import GodPanel from "./GodPanel";
@@ -106,6 +107,10 @@ export default function ChatWindow() {
   const [typingText, setTypingText] = useState("");
   const [hasCheckedSession, setHasCheckedSession] = useState(false);
   const [sessionSnapshot, setSessionSnapshot] = useState<any | null>(null);
+
+  // Compute Active Products for Right Panel
+  const latestProductsMessage = [...messages].reverse().find(m => m.products && m.products.length > 0);
+  const activeProducts = latestProductsMessage?.products || [];
 
   // Hamper / Bundle details
   const [bundle, setBundle] = useState<Product[]>([]);
@@ -1758,6 +1763,34 @@ export default function ChatWindow() {
                   <ChatInput onSendMessage={handleSendMessage} disabled={isTyping} placeholder="Ask Kappy..." />
                 </div>
               </div>
+
+              {/* 5. Product Catalog Side Panel (Desktop only) */}
+              {!isMobileView && activeTab === "chat" && activeProducts.length > 0 && (
+                  <aside className="w-[350px] lg:w-[400px] bg-white border-l border-slate-200/60 flex flex-col h-full z-10 shadow-[-4px_0_24px_rgba(0,0,0,0.02)]">
+                      <div className="flex items-center gap-2 px-5 py-4 bg-slate-50/80 border-b border-slate-100 backdrop-blur-md shrink-0">
+                          <span className="p-1.5 bg-gradient-to-tr from-violet-500 to-indigo-500 text-white rounded-lg shadow-sm">
+                              <ShoppingBag className="w-4 h-4" />
+                          </span>
+                          <div>
+                              <h2 className="font-black text-slate-800 text-[13px] tracking-tight">Product Catalog</h2>
+                              <p className="text-[10px] text-slate-500 font-bold">Kappy's latest recommendations</p>
+                          </div>
+                      </div>
+                      <div className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin bg-slate-50">
+                          {activeProducts.map(product => (
+                              <ProductCard 
+                                  key={product.id} 
+                                  product={product} 
+                                  isMobile={false} 
+                                  onProductClick={handleOpenProductModal} 
+                                  onAddToBundle={addToBundle} 
+                                  userId={user?.id} 
+                                  sessionId={activeConversationId} 
+                              />
+                          ))}
+                      </div>
+                  </aside>
+              )}
             </div>
           )}
 
